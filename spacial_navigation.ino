@@ -1,5 +1,7 @@
 
 #include <SPI.h>
+#include "moving_average.h"
+
 
 static inline int sign(int val) {
     if (val < 0) return -1;
@@ -148,20 +150,20 @@ public:
         // We don't need to set MDR1 to 0 since it is set to zero at power-up.
         digitalWrite(_chipSelectPin, HIGH);
         // We should set the initial counts to a non zero number say 100,000
-        // writeCounts(100000);
+        writeCounts(100000);
     }
 
     unsigned long readCounts() { 
         // Set the instruction register to load OTR with CNTR
         // 0b11101000
-        _regIrValue = 232;
+        _regIrValue = 0xe8; // dec: 232
         digitalWrite(_chipSelectPin, LOW);
         SPI.transfer(_regIrValue);
         digitalWrite(_chipSelectPin, HIGH);
         digitalWrite(_chipSelectPin, LOW);
         // Set the instruction register to read OTR
         // 0b01101000
-        _regIrValue = 104;
+        _regIrValue = 0x68; // dec: 104
         SPI.transfer(_regIrValue);
         // Read OTR (4 bytes).
         unsigned long counts = 0;
@@ -171,20 +173,49 @@ public:
         b1 = ~SPI.transfer(0);
         b2 = ~SPI.transfer(0);
         b3 = ~SPI.transfer(0);
+        digitalWrite(_chipSelectPin, HIGH);
 
         counts = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
-        digitalWrite(_chipSelectPin, HIGH);
 
         return counts; 
     }
 
-    void writeCounts(int count) { }
+    /*
+     *
+     */
+    unsigned long writeCounts(unsigned long count) {
+
+        unsigned char b0 = 0xFF & (count >> 24);
+        unsigned char b1 = 0xFF & (count >> 16);
+        unsigned char b2 = 0xFF & (count >> 8);
+        unsigned char b3 = 0xFF & count;
+        // Set the instruction register to write DTR
+        // 0b10011000
+        _regIrValue = 0x98;
+        digitalWrite(_chipSelectPin, LOW);
+        SPI.transfer(_regIrValue);
+        //digitalWrite(_chipSelectPin, HIGH);
+        //digitalWrite(_chipSelectPin, LOW);
+        SPI.transfer(b0);
+        SPI.transfer(b1);
+        SPI.transfer(b2);
+        SPI.transfer(b3);
+        digitalWrite(_chipSelectPin, HIGH);
+        // Set the instruction register to load DTR to CNTR
+        // 0b11100000
+        _regIrValue = 0xe0;
+        digitalWrite(_chipSelectPin, LOW);
+        SPI.transfer(_regIrValue);
+        digitalWrite(_chipSelectPin, HIGH);
+        return readCounts();
+    }
 
     void clearCounts() { }
 
     void readStatus() { }
 
 private:
+    
     /**
      * MOSI (RXD) (Pin 7 on the LS7366R chip):
      * Input. Serial output data from the host processor is shifted into the 
@@ -300,7 +331,7 @@ private:
      *                 |         |        OTR  | None
      *                 |         |        STR  | Clear STR to zero 
      * ------------------------------------------------------------------------
-     *             2 to 5 |      RD |        MDR0 | Output MDR0 serially on TXD (MISO)
+     *          2 to 5 |      RD |        MDR0 | Output MDR0 serially on TXD (MISO)
      *                 |         |        MDR1 | Output MDR1 serially on TXD (MISO)
      *                 |         |        DTR  | None
      *                 |         |        CNTR | Transfer CNTR to OTR, then output OTR serially on TXD (MISO)
@@ -838,20 +869,20 @@ public:
         // Assert the enable pin for 20 microseconds or more, then perform a
         // reading on the signal pin. Return the reading
         digitalWrite(_enablePin, HIGH);
+        delayMicroseconds(SAMPLE_DELAY);
         // Enable reading for enough time for at least a single sample at
         // maximum range.
         _rawValue = 0;
         for(int i = 0; i < SAMPLE_COUNT; i++) {
-            delayMicroseconds(SAMPLE_DELAY * 10);
+            delayMicroseconds(SAMPLE_DELAY);
             // https://www.arduino.cc/en/Tutorial/AnalogInput
             _rawValue += analogRead(_signalPin);
         }
-        _rawValue = (float)_rawValue / (float)SAMPLE_COUNT;
-        
         digitalWrite(_enablePin, LOW);
-        delayMicroseconds(SAMPLE_DELAY * 50);
-        // Convert the raw value into distance (centimeters).
+        delayMicroseconds(SAMPLE_DELAY);
+        _rawValue = (float)_rawValue / (float)SAMPLE_COUNT;
 
+        // Convert the raw value into distance (centimeters).
         _distance = (float)_rawValue / SCALE_FACTOR_CM;
         return _distance;
     }
@@ -870,7 +901,7 @@ private:
 
     int _enablePin = 0;
 
-    const int SAMPLE_COUNT = 3; 
+    const int SAMPLE_COUNT = 3;
     
     // Outputs analog voltage with a scaling factor of (Vcc/512) per inch. 
     // A supply of 5V yields ~9.8mV/in. and 3.3V yields ~6.4mV/in.
@@ -1195,6 +1226,11 @@ private:
 // in the main loop for reading sensor data and performing motor control.
 PlatformController *controller;
 
+ExponentialMovingAverage *emaSonarFront;
+ExponentialMovingAverage *emaSonarLeft;
+ExponentialMovingAverage *emaSonarRight;
+ExponentialMovingAverage *emaSonarBack;
+
 // Initialize sensors and platform controller:
 void setup() {
 
@@ -1252,6 +1288,12 @@ void setup() {
     //motorDriverRight->setDirection(REVERSE);
     //motorDriverRight->setSpeed(100);
     randomSeed(analogRead(8));
+
+
+    emaSonarFront = new ExponentialMovingAverage();
+    emaSonarLeft = new ExponentialMovingAverage();
+    emaSonarRight = new ExponentialMovingAverage();
+    emaSonarBack = new ExponentialMovingAverage();
 }
 
 
@@ -1453,6 +1495,9 @@ void processAutoAvoidance(void) {
         return;
     }
     
+    // Also we need to be able to defeat the evasive maneuver if it gets us 
+    // into a bad spot, and then choose a new one.
+
     // And not within absolute minimum thresholds. 
     if(moveUntil > millis()) {
         // We are executing some kind of evasive maneuver.
@@ -1548,15 +1593,31 @@ void processAutoAvoidance(void) {
     return;
 }
 
+
+
+
 // TODO: make platform model class that aggregates the sensors and controllers
 // in order to implement low level sensor data processing for "headless" 
 // operation. 
 void loop() {
     // Poll the sonar range-finders:
     sonarFront = controller->getSonarFront();
+    emaSonarFront->addSample(sonarFront);
+    sonarFront = emaSonarFront->computeAverage();
+
+
     sonarLeft = controller->getSonarLeft();
+    emaSonarLeft->addSample(sonarLeft);
+    sonarLeft = emaSonarLeft->computeAverage();
+    
     sonarRight = controller->getSonarRight();
+    emaSonarRight->addSample(sonarRight);
+    sonarRight = emaSonarRight->computeAverage();
+    
     sonarBack = controller->getSonarBack();
+    emaSonarBack->addSample(sonarBack);
+    sonarBack = emaSonarBack->computeAverage();    
+    
     // Poll the infrared range-finders:
 
     // Poll the encoder counters:
