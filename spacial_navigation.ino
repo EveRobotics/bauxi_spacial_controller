@@ -1159,10 +1159,10 @@ public:
 private:
 
     enum InputCommands {
-        CMD_RESET        = 0x61, // 'a' abort, reset the micro-controller.
-        CMD_SPEED_LEFT    = 0x6c, // 'l' left, valid speeds: (-10, 10)
-         CMD_SPEED_RIGHT    = 0x72, // 'r' right, valid speeds: (-10, 10)
-         CMD_RUN_MODE    = 0x6d, // 'm' mode: 0 = AUTO_AVOID, 1 = EXT_CONTROL, 2 = REMOTE_CONTROL
+        CMD_RESET           = 0x61, // 'a' abort, reset the micro-controller.
+        CMD_SPEED_LEFT      = 0x6c, // 'l' left, valid speeds: (-10, 10)
+        CMD_SPEED_RIGHT     = 0x72, // 'r' right, valid speeds: (-10, 10)
+        CMD_RUN_MODE        = 0x6d, // 'm' mode: 0 = AUTO_AVOID, 1 = EXT_CONTROL, 2 = REMOTE_CONTROL
         // ...
     };
 
