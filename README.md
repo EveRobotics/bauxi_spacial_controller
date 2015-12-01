@@ -1,21 +1,21 @@
 # README #
 
-This README would normally document whatever steps are necessary to get your application up and running.
+The Beagle Spacial Navigation project is an Arduino program that enables the 
+collection of rangefinder sensor data, rotary encoder counts for distance
+measurement, and the control of the Beagle robot's motors. It also implements
+the robot's dead-man "switch" via a radio receiver.
 
-### What is this repository for? ###
 
-* Quick summary
-* Version
-* [Learn Markdown](https://bitbucket.org/tutorials/markdowndemo)
+* Version: 1.0
 
 ### How do I get set up? ###
 
-* Summary of set up
-* Configuration
-* Dependencies
-* Database configuration
-* How to run tests
-* Deployment instructions
+* The program is designed to run on SparkFun's Arduino Pro Micro 5V/16MHz
+micro-controller; but will likely run on similar hardware, perhaps requiring 
+slight modification.
+
+* The Arduino IDE Version: 1.6.5 is used to compile and load software on the 
+target micro-controller specified above. 
 
 ### Contribution guidelines ###
 
