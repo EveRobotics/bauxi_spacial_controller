@@ -792,6 +792,7 @@ private:
 
 };
 
+
 //==============================================================================
 // INFRARED RANGEFINDER:
 //==============================================================================
@@ -1036,6 +1037,9 @@ public:
         }
             
         int deltaCounts = _encoderCountsLeft - _prevEncoderCountsLeft;
+
+
+
         _speedLeft->updateControlLoop(deltaCounts, _deltaTime);
     }
 
@@ -1049,14 +1053,14 @@ public:
     }
     
     unsigned long getMotorStatusLeft(void) {
-        return (_speedLeft->getProcessVariable() << 16)
-            + (_speedLeft->getSetPoint() << 8)
+        return ((unsigned long)(_speedLeft->getProcessVariable()) << 16)
+            + (unsigned long)(_speedLeft->getSetPoint() << 8)
             + _speedLeft->getControlVariable();
     }
     
     unsigned long getMotorStatusRight(void) {
-        return (_speedRight->getProcessVariable() << 16)
-            + (_speedRight->getSetPoint() << 8)
+        return ((unsigned long)(_speedRight->getProcessVariable()) << 16)
+            + (unsigned long)(_speedRight->getSetPoint() << 8)
             + _speedRight->getControlVariable();
     }
 
@@ -1094,10 +1098,11 @@ private:
     unsigned long _encoderCountsLeft;
     unsigned long _encoderCountsRight;
 
-    long _prevEncoderCountsLeft;
-    long _prevEncoderCountsRight;
+    unsigned long _prevEncoderCountsLeft;
+    unsigned long _prevEncoderCountsRight;
 
 };
+
 
 // Process received serial data for configuration and control commands:
 class CommandInterpreter {
@@ -1192,27 +1197,27 @@ public:
         , int buttonD, unsigned long milliseconds, unsigned int microseconds) {
                 
         _message = "s:";
-        _message = _message + sonarFront + ",";
-        _message = _message + sonarLeft + ",";
-        _message = _message + sonarRight + ",";
-        _message = _message + sonarBack + ",";
-        _message = _message + infraredDown + ",";
-        _message = _message + encoderCountsLeft + ",";
-        _message = _message + encoderCountsRight + ",";
+        _message = _message + (float)sonarFront + ",";
+        _message = _message + (float)sonarLeft + ",";
+        _message = _message + (float)sonarRight + ",";
+        _message = _message + (float)sonarBack + ",";
+        _message = _message + (float)infraredDown + ",";
+        _message = _message + (unsigned long)encoderCountsLeft + ",";
+        _message = _message + (unsigned long)encoderCountsRight + ",";
         
         // Motor status is: byte 2: speed (process variable), byte 1: set-point
         // byte 0: control variable. if motor enable is true, low bit of byte 3 is set.
-        _message = _message + motorStatusLeft + ",";
+        _message = _message + (unsigned long)motorStatusLeft + ",";
         // Same as above, but operating mode is in high byte.
-        _message = _message + motorStatusRight + ",";
+        _message = _message + (unsigned long)motorStatusRight + ",";
         
-        _message = _message + buttonA + ",";
-        _message = _message + buttonB + ",";
-        _message = _message + buttonC + ",";
-        _message = _message + buttonD + ",";
+        _message = _message + (int)buttonA + ",";
+        _message = _message + (int)buttonB + ",";
+        _message = _message + (int)buttonC + ",";
+        _message = _message + (int)buttonD + ",";
 
-        _message = _message + milliseconds + ",";
-        _message = _message + microseconds + ",";
+        _message = _message + (unsigned long)milliseconds + ",";
+        _message = _message + (unsigned long)microseconds + ",";
 
         Serial.println(_message);
     }
@@ -1457,13 +1462,12 @@ void processExternalControlInput(void) {
     return;
 }
 
-const float DIST_THRESHOLD_FRONT_MAX = 75.0;
-const float DIST_THRESHOLD_FRONT_MED = 50.0;
-const float DIST_THRESHOLD_FRONT_MIN = 25.0;
-const float DIST_THRESHOLD_SIDE = 25.0;
-const float DIST_THRESHOLD_BACK = 25.0;
-const float DIST_ABSOLUTE_MINIMUM = 18.0;
+const float DIST_THRESHOLD_MAX = 100.0;
+const float DIST_THRESHOLD_MED = 25.0;
+const float DIST_THRESHOLD_MIN = 15.0;
 
+const int SPEED_STOP = 0;
+const int SPEED_CRAWL = 2;
 const int SPEED_SLOW = 4;
 const int SPEED_MEDIUM = 7;
 const int SPEED_FAST = 10;
@@ -1499,7 +1503,12 @@ void processAutoAvoidance(void) {
     // into a bad spot, and then choose a new one.
 
     // And not within absolute minimum thresholds. 
-    if(moveUntil > millis()) {
+    if(moveUntil > millis() 
+        && ((sonarFront > DIST_THRESHOLD_MIN
+            && sonarLeft > DIST_THRESHOLD_MIN 
+            && sonarRight > DIST_THRESHOLD_MIN
+            && sonarBack > DIST_THRESHOLD_MIN) 
+                || (autoSpeedLeft == 0 && autoSpeedRight == 0))) {
         // We are executing some kind of evasive maneuver.
         // Move until the time is up.
         controller->setSpeedLeft(autoSpeedLeft);
@@ -1507,87 +1516,88 @@ void processAutoAvoidance(void) {
         return;
     }
     
-    // Use the distance sensors to determine the turn direction.
-    if(sonarFront < DIST_THRESHOLD_FRONT_MAX
-        && sonarLeft > DIST_THRESHOLD_SIDE
-        && sonarRight > DIST_THRESHOLD_SIDE
-        && sonarBack > DIST_THRESHOLD_BACK) {
-        // If the robot's front sensor is closer than some threshold distance 
-        // to an object, turn away from it.
-        if(sonarFront < DIST_THRESHOLD_FRONT_MIN) {
-            moveUntil = millis() + 2000;
-            if(sonarLeft < sonarRight) {
-                // Turn to the right, go in reverse.
-                autoSpeedLeft = 0;
-                autoSpeedRight = -SPEED_MEDIUM;
-            } else if(sonarLeft >= sonarRight) {
-                // Turn to the left, go in reverse.
-                autoSpeedLeft = -SPEED_MEDIUM;
-                autoSpeedRight = 0;
-            }
-        } else if(sonarFront < DIST_THRESHOLD_FRONT_MED) {
-            moveUntil = millis() + 1000;
-            if(sonarLeft < sonarRight) {
-                // Turn to the right.
-                autoSpeedLeft = SPEED_MEDIUM;
-                autoSpeedRight = 0;
-            } else if(sonarLeft >= sonarRight) {
-                // Turn to the left.
-                autoSpeedLeft = 0;
-                autoSpeedRight = SPEED_MEDIUM;
-            }
-        } else {
-            moveUntil = millis() + 500;
-            if(sonarLeft < sonarRight) {
-                // Turn to the right.
-                autoSpeedLeft = SPEED_FAST;
-                autoSpeedRight = SPEED_SLOW;
-            } else if(sonarLeft >= sonarRight) {
-                // Turn to the left.
-                autoSpeedLeft = SPEED_SLOW;
-                autoSpeedRight = SPEED_FAST;
-            }
-        }
-    } else if(sonarLeft <= DIST_THRESHOLD_SIDE
-        || sonarRight <= DIST_THRESHOLD_SIDE
-        || sonarBack <= DIST_THRESHOLD_BACK) {
-        if(sonarLeft <= DIST_THRESHOLD_SIDE
-            && sonarRight <= DIST_THRESHOLD_SIDE
-            && sonarBack <= DIST_THRESHOLD_BACK
-            && sonarFront <= DIST_THRESHOLD_FRONT_MED) {
-            // Do nothing. We cant go anywhere.
-            moveUntil = millis() + 1000;
-            autoSpeedLeft = 0;
-            autoSpeedRight = 0;
-        } else if(sonarLeft <= DIST_THRESHOLD_SIDE
-            || sonarRight <= DIST_THRESHOLD_SIDE
-            || (sonarBack <= DIST_THRESHOLD_BACK
-            && sonarFront <= DIST_THRESHOLD_FRONT_MED)) {
-            moveUntil = millis() + 2000;
-            if(sonarLeft < sonarRight) {
-                // Turn to the right, zero turning radius.
-                autoSpeedLeft = SPEED_MEDIUM;
-                autoSpeedRight = -SPEED_MEDIUM;
-            } else if(sonarLeft >= sonarRight) {
-                // Turn to the left, zero turning radius.
-                autoSpeedLeft = -SPEED_MEDIUM;
-                autoSpeedRight = SPEED_MEDIUM;
-            }
-        } else if(sonarFront > DIST_THRESHOLD_FRONT_MIN) {
-            //moveUntil = millis() + (1000 * 1);
-            autoSpeedLeft = SPEED_SLOW;
-            autoSpeedRight = SPEED_SLOW;
-        } else {
-            // We should never get here... But set the speed to zero anyway.
-            moveUntil = millis() + 1000;
-            autoSpeedLeft = 0;
-            autoSpeedRight = 0;
-        }
-    } else {
-        //moveUntil = millis() + (1000 * 0.25);
+    // Idea: scale the left and right sonar ranges to the left and right 
+    // motor outputs. Use a threshold distance for all rangefinder types to
+    // determine whether we move forward or backward.
+
+    // Say the furthest sonar distance is 100 cm, then map distances from zero
+    // to 100 to 0 to 10.
+
+    // TODO: scale the proportional turn rate by the proximity of the front 
+    // sonar sensor to an object. 
+    if(sonarFront > DIST_THRESHOLD_MAX
+        && sonarLeft > DIST_THRESHOLD_MAX
+        && sonarRight > DIST_THRESHOLD_MAX) {
+        // Go fast!
+        Serial.println("Case 1: L=SPEED_FAST, R=SPEED_FAST");
         autoSpeedLeft = SPEED_FAST;
         autoSpeedRight = SPEED_FAST;
+    } else if((sonarFront <= DIST_THRESHOLD_MAX
+        || sonarLeft <= DIST_THRESHOLD_MAX
+        || sonarRight <= DIST_THRESHOLD_MAX)
+            && (sonarBack > DIST_THRESHOLD_MIN
+                || (sonarLeft > DIST_THRESHOLD_MED
+                    || sonarLeft > DIST_THRESHOLD_MED
+                    || sonarFront > DIST_THRESHOLD_MED))) {
+        // 3 cases, all three rangefinders > medium distance.
+        // all three rangefinders greater than minimum distance
+        // 1 of three rangefinders less than minimum distance.
+        if(sonarFront > DIST_THRESHOLD_MED
+            && sonarLeft > DIST_THRESHOLD_MED
+            && sonarRight > DIST_THRESHOLD_MED) {
+            // Maintain forward travel but steer proportionally.
+            autoSpeedLeft = sonarRight / 10;
+            autoSpeedRight = sonarLeft / 10;
+        } else if(sonarFront > DIST_THRESHOLD_MIN
+            && sonarLeft > DIST_THRESHOLD_MIN
+            && sonarRight > DIST_THRESHOLD_MIN) {
+            
+            if(sonarFront > DIST_THRESHOLD_MED 
+                && (sonarLeft > DIST_THRESHOLD_MED
+                    || sonarRight > DIST_THRESHOLD_MED)) {
+                // Stuff is not too far away, and we can proportionally turn.
+                autoSpeedLeft = sonarRight / 10;
+                autoSpeedRight = sonarLeft / 10;
+            } else {
+                moveUntil = millis() + 1500;
+                // Use zero turning radius travel tutn away from nearest thing.
+                if(sonarLeft < sonarRight) {
+                    autoSpeedLeft = SPEED_FAST;
+                    autoSpeedRight = -SPEED_MEDIUM;
+                } else {
+                    autoSpeedLeft = -SPEED_MEDIUM;
+                    autoSpeedRight = SPEED_FAST;            
+                }
+            }
+        } else {
+            moveUntil = millis() + 2000;
+            // Go in reverse, turn away from nearest thing.
+            if(sonarBack > DIST_THRESHOLD_MED) {
+                if(sonarLeft < sonarRight) {
+                    autoSpeedLeft = -SPEED_CRAWL;
+                    autoSpeedRight = -SPEED_FAST;
+                } else {
+                    autoSpeedLeft = -SPEED_FAST;
+                    autoSpeedRight = -SPEED_CRAWL;         
+                }
+            } else {
+                // Zero turning radius turn.
+                if(sonarLeft < sonarRight) {
+                    autoSpeedLeft = SPEED_MEDIUM;
+                    autoSpeedRight = -SPEED_MEDIUM;
+                } else {
+                    autoSpeedLeft = -SPEED_MEDIUM;
+                    autoSpeedRight = SPEED_MEDIUM;         
+                }
+            }
+        }
+    } else {
+        moveUntil = millis() + 500;
+        // Stop we cant go anywhere.
+        autoSpeedLeft = 0;
+        autoSpeedRight = 0;
     }
+
     controller->setSpeedLeft(autoSpeedLeft);
     controller->setSpeedRight(autoSpeedRight);
     return;
@@ -1625,16 +1635,13 @@ void loop() {
     encoderCountsLeft = controller->readEncoderCounterLeft();
     encoderCountsRight = controller->readEncoderCounterRight();
     
-    encoderCountsLeft = controller->readEncoderCounterLeft();
-    encoderCountsRight = controller->readEncoderCounterRight();
-    
     motorStatusLeft = controller->getMotorStatusLeft();
     motorStatusRight = controller->getMotorStatusRight();
     if(motorEnable == true) {
         // set the low bit in the 4th byte in motor status left.
-        motorStatusLeft += (1 << 24);
+        motorStatusLeft += ((unsigned long)1 << 24);
     }
-    motorStatusRight += (runMode << 24);
+    motorStatusRight += ((unsigned long)runMode << 24);
     
     // Get the analog voltages for the motor battery and the platform battery:
 
