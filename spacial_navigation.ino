@@ -1,3 +1,8 @@
+/**
+Spacial Navigation Controller implementation.
+
+Targeted for Sparkfun's Arduino Pro Micro 5V 16MHz uController. 
+*/
 
 #include <SPI.h>
 #include "moving_average.h"
@@ -49,26 +54,26 @@ enum ProcessorPins {
 
 // Used for addressing the channels of the digital output multiplexer (mux2):
 enum DigitalMuxChannels {
-    C0_ENCODER_CNT_LEFT_CS = 0, // Chip select for the first (left) encoder counter.
+    C0_ENCODER_CNT_LEFT_CS  = 0, // Chip select for the first (left) encoder counter.
     C1_ENCODER_CNT_RIGHT_CS = 1, // Chip select for the right side encoder counter.
     // Sonar range-finder sonar transmit enable. Prevents interference...
-    C2_SONAR_FRONT_ENABLE = 2,
-    C3_SONAR_LEFT_ENABLE = 3,
+    C2_SONAR_LEFT_ENABLE  = 2,
+    C3_SONAR_FRONT_ENABLE = 3,
     C4_SONAR_RIGHT_ENABLE = 4,
-    C5_SONAR_BACK_ENABLE = 5,
+    C5_SONAR_BACK_ENABLE  = 5,
     // Enumerate digital status outputs:
 };
 
 // Used for addressing the channels of the analog input multiplexer (mux1):
 enum AnalogMuxChannels {
-    C0_SONAR_FRONT = 0, // Front sonar
-    C1_SONAR_LEFT = 1, // 
+    C0_SONAR_LEFT  = 0, // Sonar left input signal. 
+    C1_SONAR_FRONT = 1,
     C2_SONAR_RIGHT = 2,
-    C3_SONAR_BACK = 3,
+    C3_SONAR_BACK  = 3,
     C4_IR_DIST_FRONT = 4,
-    C5_IR_DIST_LEFT = 5,
+    C5_IR_DIST_LEFT  = 5,
     C6_IR_DIST_RIGHT = 6,
-    C7_IR_DIST_BACK = 7,
+    C7_IR_DIST_BACK  = 7,
     // Enumerate battery power monitoring channels:
     // Mux analog resolution may not be sufficient for current sensing:
     // i.e. voltage drop across a 0.1 Ohm resistor, if so, free 2 inputs
@@ -149,8 +154,8 @@ public:
         SPI.transfer(_regMdr0Value);
         // We don't need to set MDR1 to 0 since it is set to zero at power-up.
         digitalWrite(_chipSelectPin, HIGH);
-        // We should set the initial counts to a non zero number say 100,000
-        writeCounts(100000);
+        // We should set the initial counts to a non zero number say 0xFFFFFFFF / 2.
+        writeCounts(2147483647); // 0x7fffffff
     }
 
     unsigned long readCounts() { 
@@ -175,7 +180,8 @@ public:
         b3 = ~SPI.transfer(0);
         digitalWrite(_chipSelectPin, HIGH);
 
-        counts = (b0 << 24) + (b1 << 16) + (b2 << 8) + b3;
+        counts = ((unsigned long)b0 << 24) + ((unsigned long)b1 << 16) 
+            + ((unsigned long)b2 << 8) + b3;
 
         return counts; 
     }
@@ -922,15 +928,16 @@ private:
 class PlatformController {
 
 public:
-    PlatformController(SonarRangefinder *sonarFront
-        , SonarRangefinder *sonarLeft, SonarRangefinder *sonarRight
+    PlatformController(SonarRangefinder *sonarLeft
+        , SonarRangefinder *sonarFront
+        , SonarRangefinder *sonarRight
         , SonarRangefinder *sonarBack, AnalogMultiplexer *muxAnalogInput
         , AnalogMultiplexer *muxDigitalOutput, EncoderCounter *encoderLeft
         , EncoderCounter *encoderRight, MotorDriver *motorDriverLeft
         ,  MotorDriver *motorDriverRight) {
 
-        _sonarFront = sonarFront;
         _sonarLeft = sonarLeft;
+        _sonarFront = sonarFront;
         _sonarRight = sonarRight;
         _sonarBack = sonarBack;
 
@@ -953,13 +960,13 @@ public:
         return _sonarFront->readDistance();
     }
 
-    float getSonarFront() {
-        // Return the front sonar distance in centimeters.
-        return getSonarDistance(C2_SONAR_FRONT_ENABLE, C0_SONAR_FRONT);
+    float getSonarLeft() {
+        return getSonarDistance(C2_SONAR_LEFT_ENABLE, C0_SONAR_LEFT);
     }
 
-    float getSonarLeft() {
-        return getSonarDistance(C3_SONAR_LEFT_ENABLE, C1_SONAR_LEFT);
+    float getSonarFront() {
+        // Return the front sonar distance in centimeters.
+        return getSonarDistance(C3_SONAR_FRONT_ENABLE, C1_SONAR_FRONT);
     }
 
     float getSonarRight() {
@@ -979,12 +986,12 @@ public:
         return _frontIr->readDistance();
     }
 
-    float getInfraredFront() {
-        return getInfraredDistance(C4_IR_DIST_FRONT);
-    }
-
     float getInfraredLeft() {
         return getInfraredDistance(C5_IR_DIST_LEFT);
+    }
+
+    float getInfraredFront() {
+        return getInfraredDistance(C4_IR_DIST_FRONT);
     }
 
     float getInfraredRight() {
@@ -1190,35 +1197,31 @@ public:
         _message = String("s:");
     }
 
-    void sendMessage(float sonarFront, float sonarLeft, float sonarRight
-        , float sonarBack, float infraredDown, unsigned long encoderCountsLeft
-        , unsigned long encoderCountsRight, unsigned long motorStatusLeft
-        , unsigned long motorStatusRight, int buttonA, int buttonB, int buttonC
+    void sendMessage(float leftSonar, float frontSonar, float rightSonar
+        , float backSonar, float downInfrared, unsigned long encoderCountsL
+        , unsigned long encoderCountsR, unsigned long motorStatusL
+        , unsigned long motorStatusR, int buttonA, int buttonB, int buttonC
         , int buttonD, unsigned long milliseconds, unsigned int microseconds) {
                 
         _message = "s:";
-        _message = _message + (float)sonarFront + ",";
-        _message = _message + (float)sonarLeft + ",";
-        _message = _message + (float)sonarRight + ",";
-        _message = _message + (float)sonarBack + ",";
-        _message = _message + (float)infraredDown + ",";
-        _message = _message + (unsigned long)encoderCountsLeft + ",";
-        _message = _message + (unsigned long)encoderCountsRight + ",";
-        
+        _message = _message + (float)leftSonar + ",";
+        _message = _message + (float)frontSonar + ",";
+        _message = _message + (float)rightSonar + ",";
+        _message = _message + (float)backSonar + ",";
+        _message = _message + (float)downInfrared + ",";
+        _message = _message + (unsigned long)encoderCountsL + ",";
+        _message = _message + (unsigned long)encoderCountsR + ",";
         // Motor status is: byte 2: speed (process variable), byte 1: set-point
         // byte 0: control variable. if motor enable is true, low bit of byte 3 is set.
-        _message = _message + (unsigned long)motorStatusLeft + ",";
+        _message = _message + (unsigned long)motorStatusL + ",";
         // Same as above, but operating mode is in high byte.
-        _message = _message + (unsigned long)motorStatusRight + ",";
-        
+        _message = _message + (unsigned long)motorStatusR + ",";
         _message = _message + (int)buttonA + ",";
         _message = _message + (int)buttonB + ",";
         _message = _message + (int)buttonC + ",";
         _message = _message + (int)buttonD + ",";
-
         _message = _message + (unsigned long)milliseconds + ",";
         _message = _message + (unsigned long)microseconds + ",";
-
         Serial.println(_message);
     }
     
@@ -1231,8 +1234,8 @@ private:
 // in the main loop for reading sensor data and performing motor control.
 PlatformController *controller;
 
-ExponentialMovingAverage *emaSonarFront;
 ExponentialMovingAverage *emaSonarLeft;
+ExponentialMovingAverage *emaSonarFront;
 ExponentialMovingAverage *emaSonarRight;
 ExponentialMovingAverage *emaSonarBack;
 
@@ -1262,8 +1265,8 @@ void setup() {
     muxDigitalOutput = new AnalogMultiplexer(MUX_DIGITAL_OUT_S0
         , MUX_DIGITAL_OUT_S1, MUX_DIGITAL_OUT_S2, -1);
 
-    sonarFront = new SonarRangefinder(MUX_DIGITAL_OUT_SIG, MUX_ANALOG_IN_SIG);
     sonarLeft = new SonarRangefinder(MUX_DIGITAL_OUT_SIG, MUX_ANALOG_IN_SIG);
+    sonarFront = new SonarRangefinder(MUX_DIGITAL_OUT_SIG, MUX_ANALOG_IN_SIG);
     sonarRight = new SonarRangefinder(MUX_DIGITAL_OUT_SIG, MUX_ANALOG_IN_SIG);
     sonarBack = new SonarRangefinder(MUX_DIGITAL_OUT_SIG, MUX_ANALOG_IN_SIG);
     // TODO: implement and initialize the IR range-finders.
@@ -1286,7 +1289,7 @@ void setup() {
     // Initialize the speed controllers and pass the motor drivers and encoders.
     
     // Initialize the platform controller and pass the sensors mux's and controllers.
-    controller = new PlatformController(sonarFront, sonarLeft, sonarRight
+    controller = new PlatformController(sonarLeft, sonarFront, sonarRight
         , sonarBack, muxAnalogInput, muxDigitalOutput, encoderLeft
         , encoderRight, motorDriverLeft, motorDriverRight);
 
@@ -1294,9 +1297,8 @@ void setup() {
     //motorDriverRight->setSpeed(100);
     randomSeed(analogRead(8));
 
-
-    emaSonarFront = new ExponentialMovingAverage();
     emaSonarLeft = new ExponentialMovingAverage();
+    emaSonarFront = new ExponentialMovingAverage();
     emaSonarRight = new ExponentialMovingAverage();
     emaSonarBack = new ExponentialMovingAverage();
 }
@@ -1317,13 +1319,13 @@ enum ButtonDirections {
 };
 
 
-float sonarFront = 0;
-float sonarLeft = 0;
-float sonarRight = 0;
-float sonarBack = 0;
+float sonarLeftDist = 0;
+float sonarFrontDist = 0;
+float sonarRightDist = 0;
+float sonarBackDist = 0;
 
 // Measure the distance to the ground. Detect ledges and steps.
-float infraredDown = 0;
+float infraredDownDist = 0;
 
 unsigned long encoderCountsLeft = 0;
 unsigned long encoderCountsRight = 0;
@@ -1473,7 +1475,7 @@ const int SPEED_MEDIUM = 7;
 const int SPEED_FAST = 10;
 // Ensures that an evasive movement is executed for longer than the minimum
 // time required to get out of the condition that caused it. 
-long int moveUntil = 0;
+unsigned long int moveUntil = 0;
 
 int autoSpeedLeft = 0;
 int autoSpeedRight = 0;
@@ -1504,10 +1506,10 @@ void processAutoAvoidance(void) {
 
     // And not within absolute minimum thresholds. 
     if(moveUntil > millis() 
-        && ((sonarFront > DIST_THRESHOLD_MIN
-            && sonarLeft > DIST_THRESHOLD_MIN 
-            && sonarRight > DIST_THRESHOLD_MIN
-            && sonarBack > DIST_THRESHOLD_MIN) 
+        && ((sonarFrontDist > DIST_THRESHOLD_MIN
+            && sonarLeftDist > DIST_THRESHOLD_MIN 
+            && sonarRightDist > DIST_THRESHOLD_MIN
+            && sonarBackDist > DIST_THRESHOLD_MIN) 
                 || (autoSpeedLeft == 0 && autoSpeedRight == 0))) {
         // We are executing some kind of evasive maneuver.
         // Move until the time is up.
@@ -1525,43 +1527,43 @@ void processAutoAvoidance(void) {
 
     // TODO: scale the proportional turn rate by the proximity of the front 
     // sonar sensor to an object. 
-    if(sonarFront > DIST_THRESHOLD_MAX
-        && sonarLeft > DIST_THRESHOLD_MAX
-        && sonarRight > DIST_THRESHOLD_MAX) {
+    if(sonarFrontDist > DIST_THRESHOLD_MAX
+        && sonarLeftDist > DIST_THRESHOLD_MAX
+        && sonarRightDist > DIST_THRESHOLD_MAX) {
         // Go fast!
         Serial.println("Case 1: L=SPEED_FAST, R=SPEED_FAST");
         autoSpeedLeft = SPEED_FAST;
         autoSpeedRight = SPEED_FAST;
-    } else if((sonarFront <= DIST_THRESHOLD_MAX
-        || sonarLeft <= DIST_THRESHOLD_MAX
-        || sonarRight <= DIST_THRESHOLD_MAX)
-            && (sonarBack > DIST_THRESHOLD_MIN
-                || (sonarLeft > DIST_THRESHOLD_MED
-                    || sonarLeft > DIST_THRESHOLD_MED
-                    || sonarFront > DIST_THRESHOLD_MED))) {
+    } else if((sonarFrontDist <= DIST_THRESHOLD_MAX
+        || sonarLeftDist <= DIST_THRESHOLD_MAX
+        || sonarRightDist <= DIST_THRESHOLD_MAX)
+            && (sonarBackDist > DIST_THRESHOLD_MIN
+                || (sonarLeftDist > DIST_THRESHOLD_MED
+                    || sonarLeftDist > DIST_THRESHOLD_MED
+                    || sonarFrontDist > DIST_THRESHOLD_MED))) {
         // 3 cases, all three rangefinders > medium distance.
         // all three rangefinders greater than minimum distance
         // 1 of three rangefinders less than minimum distance.
-        if(sonarFront > DIST_THRESHOLD_MED
-            && sonarLeft > DIST_THRESHOLD_MED
-            && sonarRight > DIST_THRESHOLD_MED) {
+        if(sonarFrontDist > DIST_THRESHOLD_MED
+            && sonarLeftDist > DIST_THRESHOLD_MED
+            && sonarRightDist > DIST_THRESHOLD_MED) {
             // Maintain forward travel but steer proportionally.
-            autoSpeedLeft = sonarRight / 10;
-            autoSpeedRight = sonarLeft / 10;
-        } else if(sonarFront > DIST_THRESHOLD_MIN
-            && sonarLeft > DIST_THRESHOLD_MIN
-            && sonarRight > DIST_THRESHOLD_MIN) {
+            autoSpeedLeft = sonarRightDist / 10;
+            autoSpeedRight = sonarLeftDist / 10;
+        } else if(sonarFrontDist > DIST_THRESHOLD_MIN
+            && sonarLeftDist > DIST_THRESHOLD_MIN
+            && sonarRightDist > DIST_THRESHOLD_MIN) {
             
-            if(sonarFront > DIST_THRESHOLD_MED 
-                && (sonarLeft > DIST_THRESHOLD_MED
-                    || sonarRight > DIST_THRESHOLD_MED)) {
+            if(sonarFrontDist > DIST_THRESHOLD_MED 
+                && (sonarLeftDist > DIST_THRESHOLD_MED
+                    || sonarRightDist > DIST_THRESHOLD_MED)) {
                 // Stuff is not too far away, and we can proportionally turn.
-                autoSpeedLeft = sonarRight / 10;
-                autoSpeedRight = sonarLeft / 10;
+                autoSpeedLeft = sonarRightDist / 10;
+                autoSpeedRight = sonarLeftDist / 10;
             } else {
                 moveUntil = millis() + 1500;
                 // Use zero turning radius travel tutn away from nearest thing.
-                if(sonarLeft < sonarRight) {
+                if(sonarLeftDist < sonarRightDist) {
                     autoSpeedLeft = SPEED_FAST;
                     autoSpeedRight = -SPEED_MEDIUM;
                 } else {
@@ -1572,8 +1574,8 @@ void processAutoAvoidance(void) {
         } else {
             moveUntil = millis() + 2000;
             // Go in reverse, turn away from nearest thing.
-            if(sonarBack > DIST_THRESHOLD_MED) {
-                if(sonarLeft < sonarRight) {
+            if(sonarBackDist > DIST_THRESHOLD_MED) {
+                if(sonarLeftDist < sonarRightDist) {
                     autoSpeedLeft = -SPEED_CRAWL;
                     autoSpeedRight = -SPEED_FAST;
                 } else {
@@ -1582,7 +1584,7 @@ void processAutoAvoidance(void) {
                 }
             } else {
                 // Zero turning radius turn.
-                if(sonarLeft < sonarRight) {
+                if(sonarLeftDist < sonarRightDist) {
                     autoSpeedLeft = SPEED_MEDIUM;
                     autoSpeedRight = -SPEED_MEDIUM;
                 } else {
@@ -1604,29 +1606,26 @@ void processAutoAvoidance(void) {
 }
 
 
-
-
 // TODO: make platform model class that aggregates the sensors and controllers
 // in order to implement low level sensor data processing for "headless" 
 // operation. 
 void loop() {
     // Poll the sonar range-finders:
-    sonarFront = controller->getSonarFront();
-    emaSonarFront->addSample(sonarFront);
-    sonarFront = emaSonarFront->computeAverage();
+    sonarLeftDist = controller->getSonarLeft();
+    emaSonarLeft->addSample(sonarLeftDist);
+    sonarLeftDist = emaSonarLeft->computeAverage();
 
-
-    sonarLeft = controller->getSonarLeft();
-    emaSonarLeft->addSample(sonarLeft);
-    sonarLeft = emaSonarLeft->computeAverage();
+    sonarFrontDist = controller->getSonarFront();
+    emaSonarFront->addSample(sonarFrontDist);
+    sonarFrontDist = emaSonarFront->computeAverage();
     
-    sonarRight = controller->getSonarRight();
-    emaSonarRight->addSample(sonarRight);
-    sonarRight = emaSonarRight->computeAverage();
+    sonarRightDist = controller->getSonarRight();
+    emaSonarRight->addSample(sonarRightDist);
+    sonarRightDist = emaSonarRight->computeAverage();
     
-    sonarBack = controller->getSonarBack();
-    emaSonarBack->addSample(sonarBack);
-    sonarBack = emaSonarBack->computeAverage();    
+    sonarBackDist = controller->getSonarBack();
+    emaSonarBack->addSample(sonarBackDist);
+    sonarBackDist = emaSonarBack->computeAverage();    
     
     // Poll the infrared range-finders:
 
@@ -1655,9 +1654,9 @@ void loop() {
     buttonC = (controller->getMuxInputRaw(C10_RADIO_C) < 100) ? 0 : 1;
     buttonD = (controller->getMuxInputRaw(C11_RADIO_D) < 100) ? 0 : 1;
 
-    messageFormatter.sendMessage(sonarFront, sonarLeft, sonarRight, sonarBack
-        , infraredDown, encoderCountsLeft, encoderCountsRight, motorStatusLeft
-        , motorStatusRight,  buttonA, buttonB, buttonC, buttonD
+    messageFormatter.sendMessage(sonarLeftDist, sonarFrontDist, sonarRightDist
+        , sonarBackDist, infraredDownDist, encoderCountsLeft, encoderCountsRight
+        , motorStatusLeft, motorStatusRight,  buttonA, buttonB, buttonC, buttonD
         , milliseconds, microseconds);
 
     commandInterpreter.readCommands();
