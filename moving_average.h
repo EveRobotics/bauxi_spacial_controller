@@ -55,6 +55,8 @@ public:
     
     virtual float computeAverage(void) = 0;
     
+    virtual ~MovingAverage() {};
+
 protected:
     float *_sampleBuffer;
     unsigned int _bufferSize;
@@ -97,8 +99,6 @@ public:
             index = (int)_sampleCount - 1;
         }
         for(int i = 0; i < (int)_sampleCount; i++) {
-            //Serial.print("Compute Average at index: ");
-            //Serial.println(index);
             average += _sampleBuffer[index] * ((int)_sampleCount - i);
             // Work from the most recent sample to the oldest sample.
             index = index - 1;
@@ -144,6 +144,16 @@ class ExponentialMovingAverage : public MovingAverage {
     
 public:
     
+    ExponentialMovingAverage(void) {
+        _alpha = 0.5;
+        _average = 0.0;
+    }
+
+    ExponentialMovingAverage(float alpha) {
+        _alpha = alpha;
+        _average = 0.0;
+    }
+
     virtual void addSample(float sample) {
         if(_sampleCount == 0) {
             _sampleCount++;
@@ -154,6 +164,10 @@ public:
         
     }
     
+    void setAlpha(float alpha) {
+        _alpha = alpha;
+    }
+
     float computeAverage(void) {
         return _average;
     }
