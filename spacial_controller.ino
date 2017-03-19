@@ -1,9 +1,9 @@
-/******************************************************************************/
+/*****************************************************************************/
 /**
  * Spacial Navigation Controller implementation.
  *
  * Targeted for Sparkfun's Arduino Pro Mini 5V 16MHz microcontroller.
- ******************************************************************************/
+ *****************************************************************************/
 
 #include <SPI.h>
 #include <RFM69.h>
@@ -81,13 +81,14 @@ enum AnalogMuxChannels {
     C11_RADIO_D = 11,
 };
 
-//==============================================================================
-// ANALOG MULTIPLEXER:
-//==============================================================================
+///============================================================================
+/// ANALOG MULTIPLEXER:
+///============================================================================
 
+/*****************************************************************************/
 /**
  * Analog mux for reading sonar and IR and enabling the sonar transmit.
- */
+ *****************************************************************************/
 class AnalogMultiplexer {
 
 public:
@@ -156,7 +157,8 @@ private:
 /// RANGE FINDER (parent class):
 ///============================================================================
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Generic base class for rangefinder sensors.
 ******************************************************************************/
 class Rangefinder {
@@ -184,9 +186,9 @@ private:
 };
 
 
-//==============================================================================
-// INFRARED RANGEFINDER:
-//==============================================================================
+///============================================================================
+/// INFRARED RANGEFINDER:
+///============================================================================
 
 class InfraredRangefinder : public Rangefinder {
 
@@ -219,23 +221,25 @@ private:
 };
 
 
-//==============================================================================
-// SONAR RANGEFINDER:
-//==============================================================================
+///============================================================================
+/// SONAR RANGEFINDER:
+///============================================================================
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * LV-MaxSonar-EZTM Series Sonar Rangefinder class implementation.
  *
  * TODO: inherit from class Rangefinder and implement common functionality
  * for both sonar and infrared range-finders in the base class.
  *
  * Common functionality may include input buffering and averaging
- */
+ *****************************************************************************/
 class SonarRangefinder : public Rangefinder {
 
 public:
 
-    /**************************************************************************
+    /*************************************************************************/
+    /**
     * Initialize the sonar enable pin (Pin4 RX) and the analog signal output pin
     * (Pin3 AN).
     *
@@ -311,7 +315,8 @@ private:
     const int SAMPLE_DELAY = 37920; 
 };
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Base class for receiving commands from a channel.
  *
  * @details Receive commands via a serial stream and change the operating modes
@@ -320,7 +325,8 @@ private:
 class CommandInterpreter {
 
 public:
-    /**************************************************************************
+    /*************************************************************************/
+    /**
      * @brief Base class constructor
      *************************************************************************/
     CommandInterpreter() {
@@ -455,7 +461,7 @@ private:
     const unsigned char FREQUENCY = RF69_915MHZ;
     // AES encryption (or not):
     const bool ENCRYPT     = true;               // Set to "true" to use encryption
-    const char* ENCRYPTKEY = "sampleEncryptKey"; // Use the same 16-byte key on all nodes
+    const char *ENCRYPTKEY = "sampleEncryptKey"; // Use the same 16-byte key on all nodes
     // Use ACKnowledge when sending messages (or not):
     const bool USEACK = true; // Request ACKs or not
 
@@ -463,7 +469,8 @@ private:
     short _receiveSignalStrength = 0;
 };
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Serial interface based command interpreter.
  *
  * @details Process received serial data for configuration and control commands.
@@ -492,6 +499,7 @@ public:
                     Serial.print(_runMode);
                 } else if(command == CMD_RESET) {
                     Serial.print("Resetting spatial navigation controller.\n");
+                    Serial.flush();
                     resetFunc();  //call reset
                 }
                 // Parse user indicator commands and configuration commands.
@@ -506,7 +514,8 @@ private:
 
 };
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Platform controller class implementation.
  *
  * @details Centralized access to the hardware connected to the controller.
@@ -541,6 +550,7 @@ public:
                 , MUX_DIGITAL_OUT_S1, MUX_DIGITAL_OUT_S2, -1);
 
         _motorController = motorController;
+        // TODO: set the motor controller encoder counts to 1/2 or 1/4 range.
         _commandsSystem = new CommandInterpreterSystem();
         _commandsRadio = new CommandInterpreterRadio();
     }
@@ -624,6 +634,8 @@ public:
     }
 
     void setSpeed(int speedLeft, int speedRight) {
+        _motorController->SpeedM2(MOT_CTL_ADDRESS, speedLeft);
+        _motorController->SpeedM1(MOT_CTL_ADDRESS, speedRight);
     }
 
     unsigned long getMotorStatusLeft(void) {
@@ -643,6 +655,36 @@ public:
     bool processControlInput(void) {
         _commandsSystem->readCommands();
         _commandsRadio->readCommands();
+
+
+/*
+        Serial.print("System left: ");
+        Serial.print(_commandsSystem->getSpeedLeft());
+        Serial.print("\n");
+        Serial.print("System right: ");
+        Serial.print(_commandsSystem->getSpeedRight());
+        Serial.print("\n");
+        Serial.print("System mode: ");
+        Serial.print(_commandsSystem->getRunMode());
+        Serial.print("\n");
+
+
+
+        Serial.print("Radio left: ");
+        Serial.print(_commandsRadio->getSpeedLeft());
+        Serial.print("\n");
+        Serial.print("Radio right: ");
+        Serial.print(_commandsRadio->getSpeedRight());
+        Serial.print("\n");
+        Serial.print("Radio mode: ");
+        Serial.print(_commandsRadio->getRunMode());
+        Serial.print("\n");
+*/
+        Serial.print("Loop timing: ");
+        Serial.print(_deltaTime / 1000.0);
+        Serial.print(" mS\n");
+
+
         bool motorEnable = _commandsRadio->getRunMode();
         if(motorEnable) {
             unsigned char extSpeedLeft = 0;
@@ -656,8 +698,9 @@ public:
             }
             setSpeed(extSpeedLeft, extSpeedRight);
         }
-        return _commandsSystem->getRunMode() == MODE_AUTO_AVOID;
+        return motorEnable && _commandsSystem->getRunMode() == MODE_AUTO_AVOID;
     }
+
 private:
 
     void _readSonarLeft(void) {
@@ -712,9 +755,9 @@ private:
         // Read the encoder counts from the motor controller.
         unsigned char status = 0;
         bool valid = false;
-        _encoderCountsLeft = _motorController->ReadEncM1(0x80, &status, &valid);
+        _encoderCountsLeft = _motorController->ReadEncM2(MOT_CTL_ADDRESS, &status, &valid);
         // TODO: check the status and valid variables.
-        _encoderCountsRight = _motorController->ReadEncM1(0x80, &status, &valid);
+        _encoderCountsRight = _motorController->ReadEncM1(MOT_CTL_ADDRESS, &status, &valid);
     }
 
     void _checkCommandsSystem(void) {
@@ -730,6 +773,7 @@ private:
         _muxAnalogInput->selectChannel(signalPin);
     }
 
+    const unsigned char MOT_CTL_ADDRESS = 0x80;
     SonarRangefinder *_sonarFront;
     SonarRangefinder *_sonarLeft;
     SonarRangefinder *_sonarRight;
@@ -847,7 +891,8 @@ static unsigned long moveUntil = 0;
 static unsigned char autoSpeedLeft = 0;
 static unsigned char autoSpeedRight = 0;
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Drive around and avoid obstacles using range-finder readings.
  *
  * @details Take commands from the system controller and be sensitive to the
@@ -949,7 +994,7 @@ void processAutoAvoidance(PlatformController *ctrl) {
         }
     } else {
         moveUntil = millis() + 500;
-        // Stop we cant go anywhere.
+        // Stop we can't go anywhere.
         autoSpeedLeft = 0;
         autoSpeedRight = 0;
     }
@@ -963,7 +1008,8 @@ unsigned long milliseconds = 0;
 
 MessageFormatter messageFormatter;
 
-/******************************************************************************
+/*****************************************************************************/
+/**
  * @brief Arduino loop function.
  *
  * 1. Poll range finders and other data inputs
@@ -972,7 +1018,7 @@ MessageFormatter messageFormatter;
  * 4. Take actions
  *****************************************************************************/
 void loop() {
-    //controller.pollSensorData();
+    controller.pollSensorData();
     // Get the time since the program started:
     milliseconds = millis();
     microseconds = micros() % 1000;
