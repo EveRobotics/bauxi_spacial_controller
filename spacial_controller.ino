@@ -18,7 +18,7 @@
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 //==============================================================================
-// PIN DECLARATIONS:
+// PIN DECLARATIONS: TODO: fix these up for the pro mini.
 //==============================================================================
 
 enum ProcessorPins {
@@ -329,7 +329,7 @@ public:
     /**
      * @brief Base class constructor
      *************************************************************************/
-    CommandInterpreter() {
+    CommandInterpreter(const String interpreterName): _name(interpreterName) {
         _runMode = 0;
         _speedLeft = 0;
         _speedRight = 0;
@@ -342,7 +342,15 @@ public:
      *
      * @details The implementation of the reader is interface specific.
      *************************************************************************/
-    virtual void readCommands() {};
+    virtual void readCommands(void) {};
+
+    void printState(void) {
+        String s = "Cmd interpreter state: " + _name + "\n";
+        s = s + "Left: " + getSpeedLeft() + "\n";
+        s = s + "Right: " + getSpeedRight() + "\n";
+        s = s + "Mode: " + getRunMode() + "\n";
+        Serial.print(s);
+    }
 
     /**************************************************************************
      * @brief Get the speed for the left motors.
@@ -375,12 +383,16 @@ protected:
         CMD_SPEED_LEFT  = 0x6c, // 'l' left, valid speeds: (0, 255)
         CMD_SPEED_RIGHT = 0x72, // 'r' right, valid speeds: (0, 255)
         CMD_RUN_MODE    = 0x6d, // 'm' mode: 0 = AUTO_AVOID, 1 = EXT_CONTROL, 2 = REMOTE_CONTROL
-        // ...
+        // TODO: command to read motor controller PID constants.
     };
 
     int _speedLeft;
     int _speedRight;
     int _runMode;
+
+private:
+
+    const String _name; // The name of the controller, used for debug printing.
 };
 
 /******************************************************************************
@@ -391,12 +403,12 @@ protected:
 class CommandInterpreterRadio : public CommandInterpreter {
 
 public:
-    CommandInterpreterRadio(void) : CommandInterpreter() {
+    CommandInterpreterRadio(void) : CommandInterpreter(String("Radio")) {
         // Initialize the RFM69HCW:
         if(_radio.initialize(FREQUENCY, MYNODEID, NETWORKID)) {
-            Serial.print(", initialization success,");
+            Serial.print("Radio init success\n");
         } else {
-            Serial.print(", initialization failure,");
+            Serial.print("Radio init failure\n");
         }
         _radio.setHighPower(); // Always use this for RFM69HCW
         _radio.setCS(10);
@@ -408,7 +420,8 @@ public:
 
     void readCommands() {
         if(_radio.receiveDone()) {
-            bool dataValid = true;
+            _noDataCounter = 0;
+            bool commandValid = true;
             for (byte i = 1; i < _radio.DATALEN; i++) {
                 if((char)_radio.DATA[i] == ':' && _radio.DATALEN > i) {
                     unsigned char command = (char)_radio.DATA[i-1];
@@ -421,14 +434,14 @@ public:
                     } else if(command == CMD_RESET) {
                         resetFunc();  //call reset
                     } else {
-                        dataValid = false;
+                        commandValid = false;
                     }
                 }
             }
             // Save the signal strength, maybe it will be interesting to see.
             _receiveSignalStrength = _radio.RSSI;
-            if((char)_radio.DATA[_radio.DATALEN-1] != ';' || !dataValid) {
-                Serial.print("Received invalid data or EOM, radio.\n");
+            if((char)_radio.DATA[_radio.DATALEN-1] != ';' || !commandValid) {
+                Serial.print("RX invalid cmd or EOM, radio.\n");
                 Serial.print("Data: ");
                 for (byte i = 0; i < _radio.DATALEN; i++) {
                     Serial.print((char)_radio.DATA[i]);
@@ -437,6 +450,14 @@ public:
                 Serial.print(_receiveSignalStrength);
                 Serial.print("\n");
             }
+        } else {
+            // TODO: if we don't receive packets in a while shut down motion.
+            _noDataCounter++;
+            if(_noDataCounter > NO_DATA_COUNT_LIMIT) {
+                _speedLeft = 128;
+                _speedRight = 128;
+                _runMode = MODE_MOTION_DISABLED;
+            }
         }
     }
 
@@ -444,15 +465,22 @@ public:
         return _receiveSignalStrength;
     }
 
-    /**************************************************************************
+    /*************************************************************************/
+    /**
      * @brief Get a reference to the radio module
      *
      * @details Do this so we can share the radio with a telemetry system in
      *     the future.
      *************************************************************************/
-    RFM69* getRFM69RadioReference(void) {
+    RFM69* getRadioReference(void) {
         return &_radio;
     }
+
+    enum RunModes {
+        MODE_MOTION_DISABLED = 0,
+        MODE_MOTION_ENABLED_REMOTE = 1,
+        MODE_MOTION_ENABLED_AUTO = 2,
+    };
 
 private:
     const unsigned char NETWORKID = 100; // Must be the same for all nodes (0 to 255)
@@ -465,8 +493,10 @@ private:
     // Use ACKnowledge when sending messages (or not):
     const bool USEACK = true; // Request ACKs or not
 
+    const int NO_DATA_COUNT_LIMIT = 10;
     RFM69 _radio;
     short _receiveSignalStrength = 0;
+    int _noDataCounter = 0;
 };
 
 /*****************************************************************************/
@@ -478,9 +508,10 @@ private:
 class CommandInterpreterSystem : public CommandInterpreter {
 
 public:
-    CommandInterpreterSystem(void) : CommandInterpreter() {}
+    CommandInterpreterSystem(void) : CommandInterpreter("System") { }
 
     void readCommands() {
+        bool commandValid = true;
         while(Serial.available() > 0) {
             // Read the incoming bytes:
             unsigned char command = Serial.read();
@@ -498,19 +529,110 @@ public:
                     _runMode = Serial.parseInt();
                     Serial.print(_runMode);
                 } else if(command == CMD_RESET) {
-                    Serial.print("Resetting spatial navigation controller.\n");
+                    Serial.print("\nResetting controller.\n");
                     Serial.flush();
                     resetFunc();  //call reset
+                } else {
+                    commandValid = false;
                 }
+                Serial.print("\n");
                 // Parse user indicator commands and configuration commands.
-                if(Serial.read() != ';') {
-                    Serial.print("Received invalid end of message, system.\n");
+                if(Serial.read() != ';' && !commandValid) {
+                    Serial.print("RX invalid cmd or EOM, system.\n");
                 }
             }
         }
     }
 
+    enum RunModes {
+        MODE_AUTO_AVOID = 0,
+        MODE_SYS_CONTROL = 1,
+        MODE_REMOTE_CONTROL = 2,
+    };
+
 private:
+
+};
+
+/*****************************************************************************/
+/**
+ * @brief Simple wrapper class to execute roboclaw functions and capture state.
+ *
+ * @details Store status of function execution, motor tuning parameters, etc..
+ *****************************************************************************/
+class MotorController {
+
+public:
+
+    MotorController(RoboClaw *claw) {
+        _claw = claw;
+        // Set the encoder counts to half of uint32_t.max
+        if(_claw->SetEncM1(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
+            Serial.print("Set M1 encoder failed\n");
+        }
+        if(_claw->SetEncM2(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
+            Serial.print("Set M2 encoder failed\n");
+        }
+        //Set PID Coefficients, Kp, Ki, Kd,
+        if(_claw->SetM1VelocityPID(CTL_ADDRESS, KP,KI,KD, QPPS) == FAILURE) {
+            Serial.print("Setup M1 PID failed\n");
+        }
+        if(_claw->SetM2VelocityPID(CTL_ADDRESS, KP,KI,KD, QPPS) == FAILURE) {
+            Serial.print("Setup M2 PID failed\n");
+        }
+        // Set Acceleration:
+        if(_claw->SetM1DefaultAccel(CTL_ADDRESS, ACCELERATION) == FAILURE) {
+            Serial.print("Set M1 accel failed\n");
+        }
+        if(_claw->SetM2DefaultAccel(CTL_ADDRESS, ACCELERATION) == FAILURE) {
+            Serial.print("Set M2 accel failed\n");
+        }
+    }
+
+    void readEncoderCounts(void) {
+
+        bool valid = false;
+        _encoderCountsLeft = _claw->ReadEncM2(CTL_ADDRESS, &_encoderStatusM1, &valid);
+        if(valid == INVALID) {
+            Serial.print("Read M1 enc, status invalid\n");
+        }
+        _encoderCountsRight = _claw->ReadEncM1(CTL_ADDRESS, &_encoderStatusM2, &valid);
+        if(valid == INVALID) {
+            Serial.print("Read M2 enc, status invalid\n");
+        }
+    }
+
+    unsigned long getEncoderCountsLeft(void) {
+        return _encoderCountsLeft;
+    }
+
+    unsigned long getEncoderCountsRight(void) {
+        return _encoderCountsRight;
+    }
+
+    void setSpeed(int speedLeft, int speedRight) {
+        _claw->SpeedM2(CTL_ADDRESS, speedLeft);
+        _claw->SpeedM1(CTL_ADDRESS, speedRight);
+    }
+
+private:
+
+    RoboClaw *_claw;
+
+    unsigned long _encoderCountsLeft = 0;
+    unsigned long _encoderCountsRight = 0;
+    unsigned char _encoderStatusM1 = 0;
+    unsigned char _encoderStatusM2 = 0;
+
+    const unsigned char CTL_ADDRESS = 0x80;
+    //Velocity PID coefficients
+    const float KP = 1.0;
+    const float KI = 0.5;
+    const float KD = 0.25;
+    const unsigned int QPPS = 1300;
+    const unsigned int ACCELERATION = 5000;
+    const bool INVALID = false;
+    const bool FAILURE = false;
 
 };
 
@@ -529,8 +651,6 @@ public:
         _milliseconds = 0;
         _prevMilliseconds = 0;
         _prevMicroseconds = 0;
-        _encoderCountsLeft = 0;
-        _encoderCountsRight = 0;
         _prevEncoderCountsLeft = 0;
         _prevEncoderCountsRight = 0;
 
@@ -549,15 +669,18 @@ public:
         _muxDigitalOutput = new AnalogMultiplexer(MUX_DIGITAL_OUT_S0
                 , MUX_DIGITAL_OUT_S1, MUX_DIGITAL_OUT_S2, -1);
 
-        _motorController = motorController;
+        _motorController = new MotorController(motorController);
         // TODO: set the motor controller encoder counts to 1/2 or 1/4 range.
+        // TODO: encapsulate within a helper class. The motor controller
+        // as just the robo-claw requires too much care and feeding here.
+
         _commandsSystem = new CommandInterpreterSystem();
         _commandsRadio = new CommandInterpreterRadio();
     }
 
     void pollSensorData(void) {
         // Poll the sonar, IR and other sensors, bumper etc..
-        _readSonarLeft();
+        _readSonarLeft(); // Possibly combine the acquisition step.
         _readSonarFront();
         _readSonarRight();
         _readSonarBack();
@@ -571,9 +694,9 @@ public:
         _readEncoderCounts();
     }
 
-    /**************************************************************************
-     * @brief Rangefinder accessors. Side effect free.
-     *************************************************************************/
+    ///----------------------------------------------------
+    /// @brief Rangefinder accessors. Side effect free.
+    ///----------------------------------------------------
     float getSonarLeft(void) {
         return _sonarDistanceLeft;
     }
@@ -591,10 +714,9 @@ public:
         return _sonarDistanceBack;
     }
 
-    /******************************************************
-    * Infrared range-finders
-    ******************************************************/
-
+    ///----------------------------------------------------
+    /// Infrared range-finders, distance in centimeters.
+    ///----------------------------------------------------
     float getInfraredLeft(void) {
         return _infraredDistanceLeft;
     }
@@ -607,35 +729,41 @@ public:
         return _infraredDistanceBack;
     }
 
-    float getBumperSwitchStateLeft(void) {
-        return _infraredDistanceBack;
+    ///----------------------------------------------------
+    /// Bumper switch states, boolean: SWITCH_PRESSED or SWITCH_NOT_PRESSED
+    ///----------------------------------------------------
+    bool getBumperSwitchStateLeft(void) {
+        return _bumperStateLeft;
     }
 
+    bool getBumperSwitchStateRight(void) {
+        return _bumperStateRight;
+    }
+
+    ///----------------------------------------------------
+    /// Motor encoder counts.
+    ///----------------------------------------------------
+
     unsigned long getEncoderCounterLeft() {
-        return _encoderCountsLeft;
+        return _motorController->getEncoderCountsLeft();
     }
 
     unsigned long getEncoderCounterRight() {
-        return _encoderCountsRight;
+        return _motorController->getEncoderCountsRight();
     }
 
     void setTimestamp(unsigned long milliseconds, unsigned int microseconds) {
-        // Store the previous time-stamp:
-        _prevMilliseconds = _milliseconds;
+        _prevMilliseconds = _milliseconds; // Store the previous time-stamp.
         _prevMicroseconds = _microseconds;
-        // Store the current time-stamp:
-        _milliseconds = milliseconds;
+        _milliseconds = milliseconds; // Store the current time-stamp.
         _microseconds = microseconds;
-        // Now we have delta T.
-
+        // Now we have delta T in microseconds.
         _deltaTime = ((_milliseconds * 1000) + _microseconds)
             - ((_prevMilliseconds * 1000) + _prevMicroseconds);
-
     }
 
     void setSpeed(int speedLeft, int speedRight) {
-        _motorController->SpeedM2(MOT_CTL_ADDRESS, speedLeft);
-        _motorController->SpeedM1(MOT_CTL_ADDRESS, speedRight);
+        _motorController->setSpeed(speedLeft, speedRight);
     }
 
     unsigned long getMotorStatusLeft(void) {
@@ -646,7 +774,8 @@ public:
         return 0;
     }
 
-    /**************************************************************************
+    /*************************************************************************/
+    /**
      * @brief Process commands from the system controller and radio controller.
      *
      * @details Check the mode values from the system and remote control
@@ -656,49 +785,40 @@ public:
         _commandsSystem->readCommands();
         _commandsRadio->readCommands();
 
+        _commandsSystem->printState();
+        _commandsRadio->printState();
 
-/*
-        Serial.print("System left: ");
-        Serial.print(_commandsSystem->getSpeedLeft());
-        Serial.print("\n");
-        Serial.print("System right: ");
-        Serial.print(_commandsSystem->getSpeedRight());
-        Serial.print("\n");
-        Serial.print("System mode: ");
-        Serial.print(_commandsSystem->getRunMode());
-        Serial.print("\n");
+        bool motionEnable = (_commandsRadio->getRunMode()
+                == _commandsRadio->MODE_MOTION_ENABLED_AUTO)
+                && (_commandsRadio->getRunMode()
+                    == _commandsRadio->MODE_MOTION_ENABLED_REMOTE);
 
+        if(motionEnable) {
+            unsigned char speedLeft = 0;
+            unsigned char speedRight = 0;
+            if((_commandsSystem->getRunMode()
+                    == _commandsSystem->MODE_SYS_CONTROL)
+                    && (_commandsRadio->getRunMode()
+                            == _commandsRadio->MODE_MOTION_ENABLED_AUTO)) {
 
+                speedLeft = _commandsSystem->getSpeedLeft();
+                speedRight = _commandsSystem->getSpeedRight();
+            } else if(_commandsRadio->getRunMode()
+                    == _commandsRadio->MODE_MOTION_ENABLED_REMOTE) {
 
-        Serial.print("Radio left: ");
-        Serial.print(_commandsRadio->getSpeedLeft());
-        Serial.print("\n");
-        Serial.print("Radio right: ");
-        Serial.print(_commandsRadio->getSpeedRight());
-        Serial.print("\n");
-        Serial.print("Radio mode: ");
-        Serial.print(_commandsRadio->getRunMode());
-        Serial.print("\n");
-*/
+                speedLeft = _commandsRadio->getSpeedLeft();
+                speedRight = _commandsRadio->getSpeedRight();
+            }
+            setSpeed(speedLeft, speedRight);
+        }
+        return motionEnable && _commandsSystem->getRunMode()
+                == _commandsSystem->MODE_AUTO_AVOID;
+    }
+
+    void printLoopTiming(void) {
         Serial.print("Loop timing: ");
         Serial.print(_deltaTime / 1000.0);
         Serial.print(" mS\n");
-
-
-        bool motorEnable = _commandsRadio->getRunMode();
-        if(motorEnable) {
-            unsigned char extSpeedLeft = 0;
-            unsigned char extSpeedRight = 0;
-            if(_commandsSystem->getRunMode() == MODE_SYS_CONTROL) {
-                extSpeedLeft = _commandsSystem->getSpeedLeft();
-                extSpeedRight = _commandsSystem->getSpeedRight();
-            } else if(_commandsSystem->getRunMode() == MODE_REMOTE_CONTROL) {
-                extSpeedLeft = _commandsRadio->getSpeedLeft();
-                extSpeedRight = _commandsRadio->getSpeedRight();
-            }
-            setSpeed(extSpeedLeft, extSpeedRight);
-        }
-        return motorEnable && _commandsSystem->getRunMode() == MODE_AUTO_AVOID;
     }
 
 private:
@@ -724,9 +844,9 @@ private:
         _sonarDistanceBack = _sonarBack->readDistance();
     }
 
-    /******************************************************
-    * Infrared range-finders
-    ******************************************************/
+    ///----------------------------------------------------
+    /// Infrared range-finder data acquisition.
+    ///----------------------------------------------------
 
     void _readInfraredLeft(void) {
         _muxAnalogInput->selectChannel(C5_IR_DIST_LEFT);
@@ -751,13 +871,10 @@ private:
     }
 
     void _readEncoderCounts(void) {
-        _prevEncoderCountsLeft = _encoderCountsLeft;
+        _prevEncoderCountsLeft = _motorController->getEncoderCountsLeft();
+        _prevEncoderCountsRight = _motorController->getEncoderCountsRight();
         // Read the encoder counts from the motor controller.
-        unsigned char status = 0;
-        bool valid = false;
-        _encoderCountsLeft = _motorController->ReadEncM2(MOT_CTL_ADDRESS, &status, &valid);
-        // TODO: check the status and valid variables.
-        _encoderCountsRight = _motorController->ReadEncM1(MOT_CTL_ADDRESS, &status, &valid);
+        _motorController->readEncoderCounts();
     }
 
     void _checkCommandsSystem(void) {
@@ -773,7 +890,6 @@ private:
         _muxAnalogInput->selectChannel(signalPin);
     }
 
-    const unsigned char MOT_CTL_ADDRESS = 0x80;
     SonarRangefinder *_sonarFront;
     SonarRangefinder *_sonarLeft;
     SonarRangefinder *_sonarRight;
@@ -797,7 +913,7 @@ private:
     // Multiplexer for analog outputs, but we are only using it for digital.
     AnalogMultiplexer *_muxDigitalOutput;
 
-    RoboClaw *_motorController;
+    MotorController *_motorController; // Wraps the RoboClaw.
 
     unsigned long _milliseconds;
     unsigned int _microseconds;
@@ -807,9 +923,6 @@ private:
 
     unsigned long _deltaTime = 0; // Time in microseconds between now an previous.
 
-    unsigned long _encoderCountsLeft;
-    unsigned long _encoderCountsRight;
-
     unsigned long _prevEncoderCountsLeft;
     unsigned long _prevEncoderCountsRight;
 
@@ -818,12 +931,6 @@ private:
 
     bool _bumperStateLeft = false;
     bool _bumperStateRight = false;
-
-    enum RunModes {
-        MODE_AUTO_AVOID = 0,
-        MODE_SYS_CONTROL = 1,
-        MODE_REMOTE_CONTROL = 2,
-    };
 };
 
 // Format sensor data and other platform data into messages to send to the PC:
@@ -863,20 +970,6 @@ private:
     String _message;
 };
 
-// Using SoftwareSerial. See limitations of Arduino SoftwareSerial
-SoftwareSerial serial(10, 11);
-RoboClaw roboclaw(&serial, 10000);
-
-// Create global reference to the platform controller to use
-// in the main loop for reading sensor data and performing motor control.
-PlatformController controller(&roboclaw);
-
-// Initialize sensors and platform controller:
-void setup() {
-    Serial.begin(57600);
-    randomSeed(analogRead(8));
-}
-
 const float DIST_THRESHOLD_MAX = 100.0;
 const float DIST_THRESHOLD_MED = 25.0;
 const float DIST_THRESHOLD_MIN = 15.0;
@@ -913,7 +1006,7 @@ void processAutoAvoidance(PlatformController *ctrl) {
                 || (autoSpeedLeft == 0 && autoSpeedRight == 0))) {
         // We are executing some kind of evasive maneuver.
         // Move until the time is up.
-        controller.setSpeed(autoSpeedLeft, autoSpeedRight);
+        ctrl->setSpeed(autoSpeedLeft, autoSpeedRight);
         return;
     }
     
@@ -930,7 +1023,7 @@ void processAutoAvoidance(PlatformController *ctrl) {
         && sonarLeftDist > DIST_THRESHOLD_MAX
         && sonarRightDist > DIST_THRESHOLD_MAX) {
         // Go fast!
-        Serial.print("Case 1: L=SPEED_FAST, R=SPEED_FAST\n");
+        //Serial.print("Case 1: L=SPEED_FAST, R=SPEED_FAST\n");
         autoSpeedLeft = SPEED_FAST;
         autoSpeedRight = SPEED_FAST;
     } else if((sonarFrontDist <= DIST_THRESHOLD_MAX
@@ -957,6 +1050,7 @@ void processAutoAvoidance(PlatformController *ctrl) {
                 && (sonarLeftDist > DIST_THRESHOLD_MED
                     || sonarRightDist > DIST_THRESHOLD_MED)) {
                 // Stuff is not too far away, and we can proportionally turn.
+                // Maybe go a bit slower.
                 autoSpeedLeft = sonarRightDist / 10;
                 autoSpeedRight = sonarLeftDist / 10;
             } else {
@@ -964,9 +1058,9 @@ void processAutoAvoidance(PlatformController *ctrl) {
                 // Use zero turning radius travel turn away from nearest thing.
                 if(sonarLeftDist < sonarRightDist) {
                     autoSpeedLeft = SPEED_FAST;
-                    autoSpeedRight = SPEED_MEDIUM - SPEED_STOP;
+                    autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
                 } else {
-                    autoSpeedLeft = SPEED_MEDIUM - SPEED_STOP;
+                    autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
                     autoSpeedRight = SPEED_FAST;
                 }
             }
@@ -975,19 +1069,19 @@ void processAutoAvoidance(PlatformController *ctrl) {
             // Go in reverse, turn away from nearest thing.
             if(sonarBackDist > DIST_THRESHOLD_MED) {
                 if(sonarLeftDist < sonarRightDist) {
-                    autoSpeedLeft = SPEED_CRAWL - SPEED_STOP;
-                    autoSpeedRight = SPEED_FAST - SPEED_STOP;
+                    autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
+                    autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
                 } else {
-                    autoSpeedLeft = SPEED_FAST - SPEED_STOP;
-                    autoSpeedRight = SPEED_CRAWL - SPEED_STOP;
+                    autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+                    autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
                 }
             } else {
                 // Zero turning radius turn.
                 if(sonarLeftDist < sonarRightDist) {
                     autoSpeedLeft = SPEED_MEDIUM;
-                    autoSpeedRight = SPEED_MEDIUM - SPEED_STOP;
+                    autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
                 } else {
-                    autoSpeedLeft = SPEED_MEDIUM - SPEED_STOP;
+                    autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
                     autoSpeedRight = SPEED_MEDIUM;
                 }
             }
@@ -1001,6 +1095,20 @@ void processAutoAvoidance(PlatformController *ctrl) {
 
     ctrl->setSpeed(autoSpeedLeft, autoSpeedRight);
     return;
+}
+
+// Using SoftwareSerial. See limitations of Arduino SoftwareSerial
+SoftwareSerial serial(10, 11);
+RoboClaw roboclaw(&serial, 10000);
+
+// Create global reference to the platform controller to use
+// in the main loop for reading sensor data and performing motor control.
+PlatformController controller(&roboclaw);
+
+// Initialize sensors and platform controller:
+void setup() {
+    Serial.begin(57600);
+    randomSeed(analogRead(8));
 }
 
 unsigned int microseconds = 0;
@@ -1022,7 +1130,7 @@ void loop() {
     // Get the time since the program started:
     milliseconds = millis();
     microseconds = micros() % 1000;
-    //messageFormatter.sendMessage(&controller, milliseconds, microseconds);
+    messageFormatter.sendMessage(&controller, milliseconds, microseconds);
     if(controller.processControlInput()) {
         // Auto avoid is selected.
         processAutoAvoidance(&controller);
