@@ -14,8 +14,11 @@
 #include <SoftwareSerial.h>
 #include "RoboClaw.h"
 
+//#include <MemoryFree.h>
 
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
+
+
 
 //==============================================================================
 // PIN DECLARATIONS: TODO: fix these up for the pro mini.
@@ -165,13 +168,13 @@ class Rangefinder {
 
 public:
 
-    virtual float readDistance();
+    virtual float readDistance(void);
 
-    virtual float getDistance();
+    virtual float getDistance(void);
 
-    virtual int getRawDistance();
+    virtual int getRawDistance(void);
 
-    virtual ~Rangefinder() {};
+    virtual ~Rangefinder(void) { };
 
 protected:
     int _signalPin = 0;
@@ -179,7 +182,7 @@ protected:
     int _rawValue = 0;
     float _distance = 0;
 
-    ExponentialMovingAverage *_average;
+    ExponentialMovingAverage* _average;
 
 private:
 
@@ -225,12 +228,9 @@ private:
 /// SONAR RANGEFINDER:
 ///============================================================================
 
-/*****************************************************************************/
+/**************************************************************************/
 /**
- * LV-MaxSonar-EZTM Series Sonar Rangefinder class implementation.
- *
- * TODO: inherit from class Rangefinder and implement common functionality
- * for both sonar and infrared range-finders in the base class.
+ * @brief LV-MaxSonar-EZTM Series Sonar Rangefinder class implementation.
  *
  * Common functionality may include input buffering and averaging
  *****************************************************************************/
@@ -238,7 +238,7 @@ class SonarRangefinder : public Rangefinder {
 
 public:
 
-    /*************************************************************************/
+    /**********************************************************************/
     /**
     * Initialize the sonar enable pin (Pin4 RX) and the analog signal output pin
     * (Pin3 AN).
@@ -267,7 +267,7 @@ public:
         _average = new ExponentialMovingAverage();
     }
 
-    float readDistance() {
+    float readDistance(void) {
         // Assert the enable pin for 20 microseconds or more, then perform a
         // reading on the signal pin. Return the reading
         digitalWrite(_enablePin, HIGH);
@@ -457,6 +457,7 @@ public:
                 _speedLeft = 128;
                 _speedRight = 128;
                 _runMode = MODE_MOTION_DISABLED;
+                Serial.print("No radio!\n");
             }
         }
     }
@@ -489,7 +490,7 @@ private:
     const unsigned char FREQUENCY = RF69_915MHZ;
     // AES encryption (or not):
     const bool ENCRYPT     = true;               // Set to "true" to use encryption
-    const char *ENCRYPTKEY = "sampleEncryptKey"; // Use the same 16-byte key on all nodes
+    const char* ENCRYPTKEY = "sampleEncryptKey"; // Use the same 16-byte key on all nodes
     // Use ACKnowledge when sending messages (or not):
     const bool USEACK = true; // Request ACKs or not
 
@@ -564,7 +565,7 @@ class MotorController {
 
 public:
 
-    MotorController(RoboClaw *claw) {
+    MotorController(RoboClaw* claw) {
         _claw = claw;
         // Set the encoder counts to half of uint32_t.max
         if(_claw->SetEncM1(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
@@ -592,22 +593,22 @@ public:
     void readEncoderCounts(void) {
 
         bool valid = false;
-        _encoderCountsLeft = _claw->ReadEncM2(CTL_ADDRESS, &_encoderStatusM1, &valid);
+        _encCountsLeft = _claw->ReadEncM2(CTL_ADDRESS, &_encStatusM1, &valid);
         if(valid == INVALID) {
-            Serial.print("Read M1 enc, status invalid\n");
+            Serial.print("Read M1 enc, data invalid\n");
         }
-        _encoderCountsRight = _claw->ReadEncM1(CTL_ADDRESS, &_encoderStatusM2, &valid);
+        _encCountsRight = _claw->ReadEncM1(CTL_ADDRESS, &_encStatusM2, &valid);
         if(valid == INVALID) {
-            Serial.print("Read M2 enc, status invalid\n");
+            Serial.print("Read M2 enc, data invalid\n");
         }
     }
 
     unsigned long getEncoderCountsLeft(void) {
-        return _encoderCountsLeft;
+        return _encCountsLeft;
     }
 
     unsigned long getEncoderCountsRight(void) {
-        return _encoderCountsRight;
+        return _encCountsRight;
     }
 
     void setSpeed(int speedLeft, int speedRight) {
@@ -617,12 +618,12 @@ public:
 
 private:
 
-    RoboClaw *_claw;
+    RoboClaw* _claw;
 
-    unsigned long _encoderCountsLeft = 0;
-    unsigned long _encoderCountsRight = 0;
-    unsigned char _encoderStatusM1 = 0;
-    unsigned char _encoderStatusM2 = 0;
+    unsigned long _encCountsLeft = 0;
+    unsigned long _encCountsRight = 0;
+    unsigned char _encStatusM1 = 0;
+    unsigned char _encStatusM2 = 0;
 
     const unsigned char CTL_ADDRESS = 0x80;
     //Velocity PID coefficients
@@ -645,7 +646,7 @@ private:
 class PlatformController {
 
 public:
-    PlatformController(RoboClaw *motorController) {
+    PlatformController(RoboClaw* motorController) {
 
         _microseconds = 0;
         _milliseconds = 0;
@@ -670,9 +671,6 @@ public:
                 , MUX_DIGITAL_OUT_S1, MUX_DIGITAL_OUT_S2, -1);
 
         _motorController = new MotorController(motorController);
-        // TODO: set the motor controller encoder counts to 1/2 or 1/4 range.
-        // TODO: encapsulate within a helper class. The motor controller
-        // as just the robo-claw requires too much care and feeding here.
 
         _commandsSystem = new CommandInterpreterSystem();
         _commandsRadio = new CommandInterpreterRadio();
@@ -890,14 +888,14 @@ private:
         _muxAnalogInput->selectChannel(signalPin);
     }
 
-    SonarRangefinder *_sonarFront;
-    SonarRangefinder *_sonarLeft;
-    SonarRangefinder *_sonarRight;
-    SonarRangefinder *_sonarBack;
+    SonarRangefinder* _sonarFront;
+    SonarRangefinder* _sonarLeft;
+    SonarRangefinder* _sonarRight;
+    SonarRangefinder* _sonarBack;
 
-    InfraredRangefinder *_infraredLeft;
-    InfraredRangefinder *_infraredRight;
-    InfraredRangefinder *_infraredBack;
+    InfraredRangefinder* _infraredLeft;
+    InfraredRangefinder* _infraredRight;
+    InfraredRangefinder* _infraredBack;
 
     float _sonarDistanceLeft = 0.0;
     float _sonarDistanceFront = 0.0;
@@ -992,6 +990,7 @@ static unsigned char autoSpeedRight = 0;
  *     dead-man switch.
  *****************************************************************************/
 void processAutoAvoidance(PlatformController *ctrl) {
+    Serial.print("Auto avoiding\n");
     float sonarLeftDist = ctrl->getSonarLeft();
     float sonarFrontDist = ctrl->getSonarFront();
     float sonarRightDist = ctrl->getSonarRight();
@@ -1108,7 +1107,11 @@ PlatformController controller(&roboclaw);
 // Initialize sensors and platform controller:
 void setup() {
     Serial.begin(57600);
+    serial.begin(57600);
     randomSeed(analogRead(8));
+    Serial.print("freeMemory()=");
+    //Serial.print(freeMemory());
+    Serial.print("\n");
 }
 
 unsigned int microseconds = 0;
