@@ -1,4 +1,4 @@
-/*****************************************************************************/
+/***************************************************************************/
 /**
  * Spacial Navigation Controller implementation.
  *
@@ -11,7 +11,6 @@
 #include <SPI.h>
 #include <RFM69.h>
 
-
 #define USE_RANGEFINDER_AVERAGING 0
 
 #if USE_RANGEFINDER_AVERAGING
@@ -23,6 +22,7 @@
 #include "RoboClaw.h"
 
 #define SHOW_FREE_MEMORY 1
+#define DEBUG_PRINT 0
 
 #if SHOW_FREE_MEMORY
 #include <MemoryFree.h>
@@ -31,8 +31,6 @@
 void(*resetFunc)(void) = 0; //declare reset function @ address 0
 
 const unsigned char SPEED_STOP = 128;
-unsigned long microseconds = 0;
-unsigned long milliseconds = 0;
 
 //==============================================================================
 // PIN DECLARATIONS:
@@ -68,10 +66,10 @@ enum ProcessorPins {
 // Used for addressing the channels of the digital output multiplexer (mux2):
 enum DigitalMuxChannels {
     // Sonar range-finder sonar transmit enable. Prevents interference...
-    C0_SONAR_ENABLE_LEFT  = 2,
-    C1_SONAR_ENABLE_FRONT = 3,
-    C2_SONAR_ENABLE_RIGHT = 4,
-    C3_SONAR_ENABLE_BACK  = 5,
+    C0_SONAR_ENABLE_LEFT  = 0,
+    C1_SONAR_ENABLE_FRONT = 1,
+    C2_SONAR_ENABLE_RIGHT = 2,
+    C3_SONAR_ENABLE_BACK  = 3,
     // Enumerate digital status outputs:
 };
 
@@ -132,10 +130,6 @@ public:
         unsigned char s1 = (channel >> 1) & 1;
         unsigned char s2 = (channel >> 2) & 1;
         unsigned char s3 = (channel >> 3) & 1;
-
-        //Serial.print("channel: ");
-        //Serial.print(channel);
-        //Serial.print("\n");
         
         if(_s0Pin != UNUSED) {
             digitalWrite(_s0Pin, s0);
@@ -149,6 +143,7 @@ public:
         if(_s3Pin != UNUSED) {
             digitalWrite(_s3Pin, s3);
         }
+        delayMicroseconds(1);
     }
 
     const unsigned char UNUSED = 255;
@@ -223,10 +218,17 @@ private:
 
 /**************************************************************************/
 /**
- * Use a 5th degree polynomial to interpolate the following points:
+ * For fast calculation of distance, given the output voltage of the sensor,
+ * use a lookup table: ADC_TO_CM, and then interpolate between values in the
+ * table using a simple ratio applied to the mapped distance:
+ * voltage delta from table value[i] or [i-1] / adjacent table value delta.
+ *
+ * A 5th degree polynomial interpolates the following points from the
+ * GP2Y0A02YK0F datasheet plot (Output voltage [V] vs Distance to reflective object L [cm]:
  * x: [2.75, 2.52, 1.249, 1.041, 0.5916, 0.5]
  * y: [15.0, 20.0, 50.0,  60.0,  110.0,  130.0]
- *
+ * Which works well to model the behavior of the IR rangefinder. But it is
+ * computationally inefficient without a hardware floating point unit.
  *****************************************************************************/
 class InfraredRangefinder : public Rangefinder {
 
@@ -248,13 +250,37 @@ public:
         // Read the analog input, and calculate the distance.
         // TODO: determine whether we need to take multiple samples and average.
         _rawValue = analogRead(_signalPin);
-        _distance = (unsigned short)_rawValue;
         /*
+        // This is the ideal representation, but it is slow.
         _distance = (15.0+(-21.7391304348*(x-2.75)+(1.24205956448*(x-2.75)
                 *(x-2.52)+(-8.95567203181*(x-2.75)*(x-2.52)*(x-1.249)
                 +(14.9659864345*(x-2.75)*(x-2.52)*(x-1.249)*(x-1.041)
                 +(-14.1814298562*(x-2.75)*(x-2.52)*(x-1.249)*(x-1.041)*(x-0.5916)))))));
         */
+        unsigned char idx = 0;
+        short deltaInput = 32000; // ((2 ^ 16) -1 / 2) ish.
+        for(int i = 0; i < TABLE_ELEMENT_COUNT; i++) {
+            if(abs(ADC_TO_CM[i].volts - _rawValue) < deltaInput) {
+                deltaInput = abs(ADC_TO_CM[i].volts - _rawValue);
+                idx = i;
+                _distance = ADC_TO_CM[i].cm;
+            }
+        }
+
+        unsigned short deltaAdj = 0;
+        if(_rawValue < ADC_TO_CM[idx].volts && idx < TABLE_ELEMENT_COUNT - 1) {
+            deltaAdj = ADC_TO_CM[idx].volts - ADC_TO_CM[idx + 1].volts;
+            deltaInput = ADC_TO_CM[idx].volts - _rawValue;
+            float ratio =  (float)deltaInput / (float)deltaAdj;
+            deltaAdj = ADC_TO_CM[idx + 1].cm - ADC_TO_CM[idx].cm;
+            _distance = ADC_TO_CM[idx].cm + deltaAdj * ratio;
+        } else if(_rawValue > ADC_TO_CM[idx].volts && idx > 0) {
+            deltaAdj = ADC_TO_CM[idx - 1].volts - ADC_TO_CM[idx].volts;
+            deltaInput = ADC_TO_CM[idx - 1].volts - _rawValue;
+            float ratio =  (float)deltaInput / (float)deltaAdj;
+            deltaAdj = ADC_TO_CM[idx].cm - ADC_TO_CM[idx - 1].cm;
+            _distance = ADC_TO_CM[idx - 1].cm + deltaAdj * ratio;
+        }
 
 #if USE_RANGEFINDER_AVERAGING
         _average->addSample(_distance);
@@ -263,6 +289,37 @@ public:
     }
 
 private:
+
+    const unsigned char TABLE_ELEMENT_COUNT = 18;
+
+    struct ADCToCM {
+        short volts; // ADC value.
+        unsigned char cm;
+        ADCToCM(short v, unsigned char c) : volts(v), cm(c) { }
+    };
+
+    // Look up table to map analog voltage (in ADC output) to distance (CM).
+    // 1023 = 5 volts, 1023.0 / 5 = 204.6 per volt.
+    const ADCToCM ADC_TO_CM[18] = {
+              ADCToCM(620, 10)  // ?
+            , ADCToCM(563, 15)  // 2.75
+            , ADCToCM(516, 20)  // 2.52
+            , ADCToCM(405, 30)  // 1.98
+            , ADCToCM(313, 40)  // 1.53
+            , ADCToCM(256, 50)  // 1.249
+            , ADCToCM(213, 60)  // 1.041
+            , ADCToCM(186, 70)  // 0.91
+            , ADCToCM(165, 80)  // 0.805
+            , ADCToCM(146, 90)  // 0.716
+            , ADCToCM(130, 100) // 0.636
+            , ADCToCM(121, 110) // 0.5916
+            , ADCToCM(111, 120) // 0.5416
+            , ADCToCM(102, 130) // 0.5
+            , ADCToCM(94,  140) // 0.4585
+            , ADCToCM(90,  150) // 0.4375
+            , ADCToCM(88,  160) // ?
+            , ADCToCM(86,  180) // ?
+    };
 
 };
 
@@ -390,11 +447,13 @@ public:
     virtual void readCommands(void) { };
 
     void printState(void) {
+#if DEBUG_PRINT
         String s = "Cmds: " + _name + "\n";
         s = s + "l: " + getSpeedLeft() + "\n";
         s = s + "r: " + getSpeedRight() + "\n";
         s = s + "m: " + getRunMode() + "\n";
         Serial.print(s);
+#endif
     }
 
     /**************************************************************************
@@ -419,7 +478,6 @@ public:
     unsigned char getRunMode() {
         return _runMode;
     }
-
 
 protected:
 
@@ -451,11 +509,17 @@ public:
     CommandInterpreterRadio(void) : CommandInterpreter(String("Radio")) {
         // Initialize the RFM69HCW:
         _radio.setCS(SPI_CS);
+
         if(_radio.initialize(FREQUENCY, MYNODEID, NETWORKID)) {
+
+#if DEBUG_PRINT
             Serial.print("Radio init\n");
+#endif
+
         } else {
             Serial.print("Radio init fail\n");
         }
+
         _radio.setHighPower(); // Always use this for RFM69HCW
         // By default, pin 2 is used for the interrupt pin.
         // Turn on encryption if desired:
@@ -486,6 +550,8 @@ public:
             }
             // Save the signal strength, maybe it will be interesting to see.
             _receiveSignalStrength = _radio.RSSI;
+
+#if DEBUG_PRINT
             if((char)_radio.DATA[_radio.DATALEN-1] != ';' || !commandValid) {
                 Serial.print("RX bad cmd or EOM, radio\n");
                 Serial.print("Data: ");
@@ -496,6 +562,8 @@ public:
                 Serial.print(_receiveSignalStrength);
                 Serial.print("\n");
             }
+#endif
+
         } else {
             // TODO: if we don't receive packets in a while shut down motion.
             _noDataCounter++;
@@ -564,27 +632,35 @@ public:
         while(Serial.available() > 0) {
             // Read the incoming bytes:
             unsigned char command = Serial.read();
+
+#if DEBUG_PRINT
             Serial.print("Received command: ");
             Serial.print(command);
             Serial.print(", param: ");
+#endif
+
+            int value = -1;
             if(Serial.read() == ':') {
+                value = Serial.parseInt();
                 if(command == CMD_SPEED_LEFT) {
-                    _speedLeft = Serial.parseInt();
-                    Serial.print(_speedLeft);
+                    _speedLeft = (unsigned char)value;
                 } else if(command == CMD_SPEED_RIGHT) {
-                    _speedRight = Serial.parseInt();
-                    Serial.print(_speedRight);
+                    _speedRight = (unsigned char)value;
                 } else if(command == CMD_RUN_MODE) {
-                    _runMode = Serial.parseInt();
-                    Serial.print(_runMode);
+                    _runMode = (unsigned char)value;
                 } else if(command == CMD_RESET) {
                     Serial.print("\nResetting\n");
-                    Serial.flush();
+                    Serial.flush(); // Make sure this is printed.
                     resetFunc();  //call reset
                 } else {
                     commandValid = false;
                 }
+
+#if DEBUG_PRINT
+                Serial.print(value);
                 Serial.print("\n");
+#endif
+
                 // Parse user indicator commands and configuration commands.
                 if(Serial.read() != ';' && !commandValid) {
                     Serial.print("RX bad cmd or EOM, sys.\n");
@@ -616,37 +692,40 @@ public:
 
     MotorController(RoboClaw* claw) {
         _claw = claw;
-        bool initSuccess = true;
+        bool result = true;
         // Set the encoder counts to half of uint32_t.max
         if(_claw->SetEncM1(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
-            initSuccess = false;
+            result = FAILURE;
         }
         if(_claw->SetEncM2(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
-            initSuccess = false;
+            result = FAILURE;
         }
         //Set PID Coefficients, Kp, Ki, Kd,
-        if(_claw->SetM1VelocityPID(CTL_ADDRESS, KP,KI,KD, QPPS) == FAILURE) {
-            initSuccess = false;
+        if(_claw->SetM1VelocityPID(CTL_ADDRESS, KP, KI, KD, QPPS) == FAILURE) {
+            result = FAILURE;
         }
-        if(_claw->SetM2VelocityPID(CTL_ADDRESS, KP,KI,KD, QPPS) == FAILURE) {
-            initSuccess = false;
+        if(_claw->SetM2VelocityPID(CTL_ADDRESS, KP, KI, KD, QPPS) == FAILURE) {
+            result = FAILURE;
         }
-        // Set Acceleration:
+        // Set Acceleration: don't really need this now since we set
+        // acceleration when we set speed.
         if(_claw->SetM1DefaultAccel(CTL_ADDRESS, ACCELERATION) == FAILURE) {
-            initSuccess = false;
+            result = FAILURE;
         }
         if(_claw->SetM2DefaultAccel(CTL_ADDRESS, ACCELERATION) == FAILURE) {
-            initSuccess = false;
+            result = FAILURE;
         }
-        if(!initSuccess) {
-            Serial.print("Motor ctrl init failed\n");
+        if(result == FAILURE) {
+            Serial.print("Motor ctrl init fail\n");
         }
     }
 
     void readEncoderCounts(void) {
         bool valid = false;
         bool readSuccess = true;
-        // TODO: we can probably read the encoders with one call.
+        // TODO: we can probably read the encoders with one call, like this:
+        //valid = _claw->ReadEncoders(CTL_ADDRESS, &_encCountsRight, &_encCountsLeft);
+
         _encCountsLeft = _claw->ReadEncM2(CTL_ADDRESS, &_encStatusM2, &valid);
         if(valid == INVALID) {
             readSuccess = FAILURE;
@@ -689,8 +768,11 @@ public:
         if(speedRight == SPEED_STOP) {
             qppsSpeedRight = 0;
         }
-        _claw->SpeedM2(CTL_ADDRESS, qppsSpeedLeft);
-        _claw->SpeedM1(CTL_ADDRESS, qppsSpeedRight);
+        // The acceleration used here, seems not to be the default one...
+        _claw->SpeedAccelM1M2(CTL_ADDRESS, ACCELERATION, qppsSpeedRight, qppsSpeedLeft);
+        //_claw->SpeedM2(CTL_ADDRESS, qppsSpeedLeft);
+        //_claw->SpeedM1(CTL_ADDRESS, qppsSpeedRight);
+
         // TODO: see about using: SpeedAccelM1M2()
     }
 
@@ -710,7 +792,7 @@ private:
     const float KD = 0.25;
     const int QPPS = 10300;
     const int SPEED_LIMIT = 6000;
-    const unsigned int ACCELERATION = 8000;
+    const unsigned int ACCELERATION = 4000;
     const bool INVALID = false;
     const bool FAILURE = false;
 
@@ -829,26 +911,39 @@ public:
         return _motorController->getEncoderCountsRight();
     }
 
-    void setTimestamp(unsigned long milliseconds, unsigned long microseconds) {
+    void setTimestamp(unsigned long milliseconds, unsigned short microseconds) {
         _prevMilliseconds = _milliseconds; // Store the previous time-stamp.
         _prevMicroseconds = _microseconds;
         _milliseconds = milliseconds; // Store the current time-stamp.
-        _microseconds = microseconds;
+        _microseconds = microseconds; // Modulo 1000.
         // Now we have delta T in microseconds.
-        _deltaTime = ((_milliseconds * 1000) + _microseconds)
-            - ((_prevMilliseconds * 1000) + _prevMicroseconds);
+        _deltaTime = ((_milliseconds * 1000) + (unsigned long)_microseconds)
+            - ((_prevMilliseconds * 1000) + (unsigned long)_prevMicroseconds);
+    }
+
+    unsigned long getMilliseconds(void) {
+        return _milliseconds;
+    }
+
+    unsigned short getMicroseconds(void) {
+        return _microseconds;
     }
 
     void setSpeed(int speedLeft, int speedRight) {
         _motorController->setSpeed(speedLeft, speedRight);
     }
 
+    // If we are not going to use these, we can remove them.
     unsigned char getMotorStatusLeft(void) {
         return _motorController->getMotorStatusLeft();
     }
 
     unsigned char getMotorStatusRight(void) {
         return _motorController->getMotorStatusRight();;
+    }
+
+    unsigned char getRunModeRadio(void) {
+        return _commandsRadio->getRunMode();
     }
 
     /*************************************************************************/
@@ -872,14 +967,14 @@ public:
                 || (_commandsSystem->getRunMode()
                     == _commandsSystem->MODE_MANUAL_OVERRIDE);
 
+        unsigned char speedLeft = SPEED_STOP;
+        unsigned char speedRight = SPEED_STOP;
         if(!motionEnable) {
-            setSpeed(SPEED_STOP, SPEED_STOP);
             digitalWrite(MOTOR_ENABLE, LOW);
         } else {
             // Enable the motor controller motor battery, via relay output.
             digitalWrite(MOTOR_ENABLE, HIGH);
-            unsigned char speedLeft = SPEED_STOP;
-            unsigned char speedRight = SPEED_STOP;
+
             if(((_commandsSystem->getRunMode()
                     == _commandsSystem->MODE_SYS_CONTROL)
                     && (_commandsRadio->getRunMode()
@@ -895,16 +990,23 @@ public:
                 speedLeft = _commandsRadio->getSpeedLeft();
                 speedRight = _commandsRadio->getSpeedRight();
             }
-            setSpeed(speedLeft, speedRight);
+
         }
+        setSpeed(speedLeft, speedRight);
         return motionEnable && _commandsSystem->getRunMode()
                 == _commandsSystem->MODE_AUTO_AVOID;
     }
 
     void printLoopTiming(void) {
+#if DEBUG_PRINT
         Serial.print("Loop time: ");
         Serial.print(_deltaTime / 1000);
         Serial.print(" mS\n");
+#endif
+    }
+
+    unsigned short getDeltaTime(void) {
+        return _deltaTime / 1000;
     }
 
 private:
@@ -993,10 +1095,10 @@ private:
     MotorController* _motorController; // Wraps the RoboClaw.
 
     unsigned long _milliseconds;
-    unsigned long _microseconds;
+    unsigned short _microseconds;
 
     unsigned long _prevMilliseconds;
-    unsigned long _prevMicroseconds;
+    unsigned short _prevMicroseconds;
 
     unsigned long _deltaTime = 0; // Time in microseconds between now an previous.
 
@@ -1029,7 +1131,11 @@ static unsigned long moveUntil = 0;
  *     dead-man switch.
  *****************************************************************************/
 void processAutoAvoidance(PlatformController* ctrl) {
+
+#if DEBUG_PRINT
     Serial.print("Auto avoiding\n");
+#endif
+
     unsigned char autoSpeedLeft = SPEED_STOP;
     unsigned char autoSpeedRight = SPEED_STOP;
     unsigned short sonarLeftDist = ctrl->getSonarLeft();
@@ -1148,10 +1254,15 @@ void sendSystemMessage(PlatformController* ctrl) {
             + ctrl->getInfraredLeft() + ","
             + ctrl->getInfraredRight() + ","
             + ctrl->getInfraredBack() + ","
+            + ctrl->getBumperSwitchStateLeft() + ","
+            + ctrl->getBumperSwitchStateRight() + ","
             + ctrl->getEncoderCounterLeft() + ","
             + ctrl->getEncoderCounterRight() + ","
-            + milliseconds + ","
-            + microseconds + ",\n";
+            + ctrl->getMotorStatusLeft() + ","
+            + ctrl->getMotorStatusRight() + ","
+            + ctrl->getRunModeRadio() + ","
+            + ctrl->getMilliseconds() + ","
+            + ctrl->getMicroseconds() + ",\n";
     Serial.print(message);
 }
 
@@ -1176,11 +1287,13 @@ void setup() {
     delay(100);
     pinMode(MOTOR_ENABLE, OUTPUT);
     controller = new PlatformController(&roboclaw);
+
 #if SHOW_FREE_MEMORY
     Serial.print("freeMemory() = ");
     Serial.print(freeMemory());
     Serial.print("\n");
 #endif
+
 }
 
 /*****************************************************************************/
@@ -1195,14 +1308,13 @@ void setup() {
 void loop() {
     controller->pollSensorData();
     // Get the time since the program started:
-    milliseconds = millis();
-    microseconds = micros() % 1000;
+
     sendSystemMessage(controller);
     if(controller->processControlInput()) {
         // Auto avoid is selected.
         processAutoAvoidance(controller);
     }
-    controller->setTimestamp(milliseconds, microseconds);
+    controller->setTimestamp(millis(), micros() % 1000);
     controller->printLoopTiming();
     return;
 }
