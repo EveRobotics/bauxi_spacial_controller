@@ -11,7 +11,7 @@
 #include <SPI.h>
 #include <RFM69.h>
 
-#define USE_RANGEFINDER_AVERAGING 0
+#define USE_RANGEFINDER_AVERAGING 1
 
 #if USE_RANGEFINDER_AVERAGING
 #include "moving_average.h"
@@ -143,7 +143,7 @@ public:
         if(_s3Pin != UNUSED) {
             digitalWrite(_s3Pin, s3);
         }
-        delayMicroseconds(1);
+        delayMicroseconds(6);
     }
 
     const unsigned char UNUSED = 255;
@@ -366,7 +366,7 @@ public:
         // We do not need to initialize the HW for the analog input pin.
 
 #if USE_RANGEFINDER_AVERAGING
-        _average = new ExponentialMovingAverage();
+        _average = new ExponentialMovingAverage(0.4);
 #endif
 
     }
@@ -375,15 +375,13 @@ public:
         // Assert the enable pin for 20 microseconds or more, then perform a
         // reading on the signal pin. Return the reading
         digitalWrite(_enablePin, HIGH);
-        delayMicroseconds(SAMPLE_DELAY);
-        // Enable reading for enough time for at least a single sample at
-        // maximum range.
+        delayMicroseconds(20);
         int delta = 32000;
         int rawValue = 0;
         _prevRawValue = _rawValue;
         // Very simple mode filter. Pick the measurement closest to the last one.
         for(unsigned char i = 0; i < SAMPLE_COUNT; i++) {
-            delayMicroseconds(SAMPLE_DELAY);
+            delay(SAMPLE_DELAY);
             // https://www.arduino.cc/en/Tutorial/AnalogInput
             rawValue = analogRead(_signalPin);
             if(abs(rawValue - _prevRawValue) < delta) {
@@ -392,6 +390,7 @@ public:
             }
         }
         digitalWrite(_enablePin, LOW);
+        delay(SAMPLE_DELAY);
         // Convert the raw value into distance (centimeters).
         _distance = (unsigned short)((float)_rawValue / SCALE_FACTOR_CM);
 
@@ -405,16 +404,16 @@ private:
 
     unsigned char _enablePin = 0;
 
-    const unsigned char SAMPLE_COUNT = 2;
+    const unsigned char SAMPLE_COUNT = 1;
     
     // Outputs analog voltage with a scaling factor of (Vcc / 512) per inch.
     // A supply of 5V yields ~9.8mV / inch and 3.3V yields ~6.4mV/inch.
-    const float SCALE_FACTOR_IN = 1023.0 / 512.0;
+    //const float SCALE_FACTOR_IN = 1023.0 / 512.0;
     // 2.54 centimeters per inch.
     const float SCALE_FACTOR_CM = 1023.0 / 1300.48;
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const int SAMPLE_DELAY = 37920; 
+    const int SAMPLE_DELAY = 23; // milliseconds.
 };
 
 /*****************************************************************************/
@@ -553,7 +552,7 @@ public:
 
 #if DEBUG_PRINT
             if((char)_radio.DATA[_radio.DATALEN-1] != ';' || !commandValid) {
-                Serial.print("RX bad cmd or EOM, radio\n");
+                Serial.print("Bad cmd: radio\n");
                 Serial.print("Data: ");
                 for (byte i = 0; i < _radio.DATALEN; i++) {
                     Serial.print((char)_radio.DATA[i]);
@@ -568,12 +567,19 @@ public:
             // TODO: if we don't receive packets in a while shut down motion.
             _noDataCounter++;
             if(_noDataCounter > NO_DATA_COUNT_LIMIT) {
+                _noDataCounter = NO_DATA_COUNT_LIMIT + 1; // prevent overflow.
                 _speedLeft = SPEED_STOP;
                 _speedRight = SPEED_STOP;
                 _runMode = MODE_MOTION_DISABLED;
-                Serial.print("No radio!\n");
+#if DEBUG_PRINT
+                Serial.print("!Radio\n");
+#endif
             }
         }
+    }
+
+    bool getRadioEnabled(void) {
+        return _noDataCounter < NO_DATA_COUNT_LIMIT;
     }
 
     short getReceiveSignalStrength(void) {
@@ -663,7 +669,7 @@ public:
 
                 // Parse user indicator commands and configuration commands.
                 if(Serial.read() != ';' && !commandValid) {
-                    Serial.print("RX bad cmd or EOM, sys.\n");
+                    Serial.print("Bad cmd: sys.\n");
                 }
             }
         }
@@ -716,7 +722,7 @@ public:
             result = FAILURE;
         }
         if(result == FAILURE) {
-            Serial.print("Motor ctrl init fail\n");
+            Serial.print("Motor fail\n");
         }
     }
 
@@ -735,7 +741,7 @@ public:
             readSuccess = FAILURE;
         }
         if(readSuccess == FAILURE) {
-             Serial.print("Read encoder cts fail\n");
+             Serial.print("Encoder fail\n");
         }
     }
 
@@ -839,17 +845,16 @@ public:
 
     void pollSensorData(void) {
         // Poll the sonar, IR and other sensors, bumper etc..
-        _readSonarLeft(); // Possibly combine the acquisition step.
-        _readSonarFront();
-        _readSonarRight();
-        _readSonarBack();
-        // Next get the IR sensors:
+        // Interleave sonar IR and bumper to allow sonar audio to dissipate.
+        _readSonarLeft();
         _readInfraredLeft();
-        _readInfraredRight();
-        _readInfraredBack();
-        // Next get bumper switch states:
         _readBumperSwitchStates();
-        // Next get the motor encoder counts and other motor related stuff.
+        _readSonarFront();
+        _readInfraredRight();
+        _readSonarRight();
+        _readInfraredBack();
+        _readSonarBack();
+        // Next get the motor encoder counts.
         _readEncoderCounts();
     }
 
@@ -946,6 +951,10 @@ public:
         return _commandsRadio->getRunMode();
     }
 
+    unsigned char getRadioEnabled(void) {
+        return _commandsRadio->getRadioEnabled();
+    }
+
     /*************************************************************************/
     /**
      * @brief Process commands from the system controller and radio controller.
@@ -999,7 +1008,7 @@ public:
 
     void printLoopTiming(void) {
 #if DEBUG_PRINT
-        Serial.print("Loop time: ");
+        Serial.print("Loop: ");
         Serial.print(_deltaTime / 1000);
         Serial.print(" mS\n");
 #endif
@@ -1116,12 +1125,16 @@ const unsigned short DIST_THRESHOLD_MAX = 100;
 const unsigned short DIST_THRESHOLD_MED = 25;
 const unsigned short DIST_THRESHOLD_MIN = 15;
 
+// For IR sensors, nominal range is between medium and maximum.
+
 const unsigned char SPEED_CRAWL  = 140;
 const unsigned char SPEED_SLOW   = 150;
 const unsigned char SPEED_MEDIUM = 160;
 const unsigned char SPEED_FAST   = 200;
 
 static unsigned long moveUntil = 0;
+unsigned char autoSpeedLeft = SPEED_STOP;
+unsigned char autoSpeedRight = SPEED_STOP;
 
 /*****************************************************************************/
 /**
@@ -1136,13 +1149,16 @@ void processAutoAvoidance(PlatformController* ctrl) {
     Serial.print("Auto avoiding\n");
 #endif
 
-    unsigned char autoSpeedLeft = SPEED_STOP;
-    unsigned char autoSpeedRight = SPEED_STOP;
     unsigned short sonarLeftDist = ctrl->getSonarLeft();
     unsigned short sonarFrontDist = ctrl->getSonarFront();
     unsigned short sonarRightDist = ctrl->getSonarRight();
     unsigned short sonarBackDist = ctrl->getSonarBack();
     
+    // TODO: use IR ranges to make auto-avoidance decisions.
+    unsigned short irLeftDist = ctrl->getInfraredLeft();
+    unsigned short irRightDist = ctrl->getInfraredRight();
+    unsigned short irBackDist = ctrl->getInfraredBack();
+
     // And not within absolute minimum thresholds. 
     if(moveUntil > millis() 
         && ((sonarFrontDist > DIST_THRESHOLD_MIN
@@ -1150,6 +1166,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             && sonarRightDist > DIST_THRESHOLD_MIN
             && sonarBackDist > DIST_THRESHOLD_MIN)
                 || (autoSpeedLeft == SPEED_STOP && autoSpeedRight == SPEED_STOP))) {
+
         // We are executing some kind of evasive maneuver.
         // Move until the time is up.
         ctrl->setSpeed(autoSpeedLeft, autoSpeedRight);
@@ -1168,6 +1185,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
     if(sonarFrontDist > DIST_THRESHOLD_MAX
         && sonarLeftDist > DIST_THRESHOLD_MAX
         && sonarRightDist > DIST_THRESHOLD_MAX) {
+
         // Go fast!
         //Serial.print("Case 1: L=SPEED_FAST, R=SPEED_FAST\n");
         autoSpeedLeft = SPEED_FAST;
@@ -1179,6 +1197,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
                 || (sonarLeftDist > DIST_THRESHOLD_MED
                     || sonarLeftDist > DIST_THRESHOLD_MED
                     || sonarFrontDist > DIST_THRESHOLD_MED))) {
+
         // 3 cases, all three range-finders > medium distance.
         // all three range-finders greater than minimum distance
         // 1 of three range-finders less than minimum distance.
@@ -1191,10 +1210,11 @@ void processAutoAvoidance(PlatformController* ctrl) {
         } else if(sonarFrontDist > DIST_THRESHOLD_MIN
             && sonarLeftDist > DIST_THRESHOLD_MIN
             && sonarRightDist > DIST_THRESHOLD_MIN) {
-            
+
             if(sonarFrontDist > DIST_THRESHOLD_MED 
                 && (sonarLeftDist > DIST_THRESHOLD_MED
                     || sonarRightDist > DIST_THRESHOLD_MED)) {
+
                 // Stuff is not too far away, and we can proportionally turn.
                 // Maybe go a bit slower.
                 autoSpeedLeft = sonarRightDist / 10;
@@ -1261,8 +1281,9 @@ void sendSystemMessage(PlatformController* ctrl) {
             + ctrl->getMotorStatusLeft() + ","
             + ctrl->getMotorStatusRight() + ","
             + ctrl->getRunModeRadio() + ","
+            + ctrl->getRadioEnabled() + ","
             + ctrl->getMilliseconds() + ","
-            + ctrl->getMicroseconds() + ",\n";
+            + ctrl->getMicroseconds() + "\n";
     Serial.print(message);
 }
 
@@ -1289,7 +1310,7 @@ void setup() {
     controller = new PlatformController(&roboclaw);
 
 #if SHOW_FREE_MEMORY
-    Serial.print("freeMemory() = ");
+    Serial.print("Free RAM: ");
     Serial.print(freeMemory());
     Serial.print("\n");
 #endif
