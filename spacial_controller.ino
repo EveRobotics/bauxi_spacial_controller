@@ -4,8 +4,8 @@
  *
  * Targeted for Sparkfun's Arduino Pro Mini 5V 16MHz microcontroller.
  *
- * Sketch uses 17,720 bytes (57%) of program storage space. Maximum is 30,720 bytes.
- * Global variables use 819 bytes (39%) of dynamic memory, leaving 1,229 bytes for local variables. Maximum is 2,048 bytes.
+Sketch uses 19,260 bytes (62%) of program storage space. Maximum is 30,720 bytes.
+Global variables use 615 bytes (30%) of dynamic memory, leaving 1,433 bytes for local variables. Maximum is 2,048 bytes.
  *****************************************************************************/
 
 #include <SPI.h>
@@ -550,8 +550,9 @@ public:
             // Save the signal strength, maybe it will be interesting to see.
             _receiveSignalStrength = _radio.RSSI;
 
-#if DEBUG_PRINT
             if((char)_radio.DATA[_radio.DATALEN-1] != ';' || !commandValid) {
+
+#if DEBUG_PRINT
                 Serial.print("Bad cmd: radio\n");
                 Serial.print("Data: ");
                 for (byte i = 0; i < _radio.DATALEN; i++) {
@@ -560,9 +561,9 @@ public:
                 Serial.print("\nRSSI: ");
                 Serial.print(_receiveSignalStrength);
                 Serial.print("\n");
-            }
 #endif
 
+            }
         } else {
             // TODO: if we don't receive packets in a while shut down motion.
             _noDataCounter++;
@@ -722,7 +723,11 @@ public:
             result = FAILURE;
         }
         if(result == FAILURE) {
+
+#if DEBUG_PRINT
             Serial.print("Motor fail\n");
+#endif
+
         }
     }
 
@@ -741,7 +746,11 @@ public:
             readSuccess = FAILURE;
         }
         if(readSuccess == FAILURE) {
+
+#if DEBUG_PRINT
              Serial.print("Encoder fail\n");
+#endif
+
         }
     }
 
@@ -753,6 +762,7 @@ public:
         return _encCountsRight;
     }
 
+    /*
     unsigned char getMotorStatusLeft(void) {
         return _encStatusM2;
     }
@@ -760,6 +770,7 @@ public:
     unsigned char getMotorStatusRight(void) {
         return _encStatusM1;
     }
+    */
 
     void setSpeed(unsigned char speedLeft, unsigned char speedRight) {
         // Map the input speed (0 to 255 with 128 being zero) to some range of
@@ -819,8 +830,6 @@ public:
         _milliseconds = 0;
         _prevMilliseconds = 0;
         _prevMicroseconds = 0;
-        _prevEncoderCountsLeft = 0;
-        _prevEncoderCountsRight = 0;
 
         _commandsSystem = new CommandInterpreterSystem();
         _commandsRadio = new CommandInterpreterRadio();
@@ -852,10 +861,15 @@ public:
         _readSonarFront();
         _readInfraredRight();
         _readSonarRight();
-        _readInfraredBack();
-        _readSonarBack();
         // Next get the motor encoder counts.
         _readEncoderCounts();
+
+        // Don't bother getting the back sensors unless we are going back.
+        // This shortens the loop timing....
+        //if(_speedLeft < SPEED_STOP || _speedRight < SPEED_STOP) {
+            _readInfraredBack();
+            _readSonarBack();
+        //} // This is a bad idea, it creates a dependency problem when reversing.
     }
 
     ///----------------------------------------------------
@@ -916,6 +930,14 @@ public:
         return _motorController->getEncoderCountsRight();
     }
 
+    unsigned char getSpeedLeft() {
+        return _speedLeft;
+    }
+
+    unsigned char getSpeedRight() {
+        return _speedRight;
+    }
+
     void setTimestamp(unsigned long milliseconds, unsigned short microseconds) {
         _prevMilliseconds = _milliseconds; // Store the previous time-stamp.
         _prevMicroseconds = _microseconds;
@@ -935,17 +957,21 @@ public:
     }
 
     void setSpeed(int speedLeft, int speedRight) {
+        _speedLeft = speedLeft;
+        _speedRight = speedRight;
         _motorController->setSpeed(speedLeft, speedRight);
     }
 
+    /*
     // If we are not going to use these, we can remove them.
     unsigned char getMotorStatusLeft(void) {
         return _motorController->getMotorStatusLeft();
     }
 
     unsigned char getMotorStatusRight(void) {
-        return _motorController->getMotorStatusRight();;
+        return _motorController->getMotorStatusRight();
     }
+    */
 
     unsigned char getRunModeRadio(void) {
         return _commandsRadio->getRunMode();
@@ -976,10 +1002,9 @@ public:
                 || (_commandsSystem->getRunMode()
                     == _commandsSystem->MODE_MANUAL_OVERRIDE);
 
-        unsigned char speedLeft = SPEED_STOP;
-        unsigned char speedRight = SPEED_STOP;
         if(!motionEnable) {
             digitalWrite(MOTOR_ENABLE, LOW);
+            setSpeed(SPEED_STOP, SPEED_STOP);
         } else {
             // Enable the motor controller motor battery, via relay output.
             digitalWrite(MOTOR_ENABLE, HIGH);
@@ -991,27 +1016,30 @@ public:
                     || (_commandsSystem->getRunMode()
                         == _commandsSystem->MODE_MANUAL_OVERRIDE)) {
 
-                speedLeft = _commandsSystem->getSpeedLeft();
-                speedRight = _commandsSystem->getSpeedRight();
+                _speedLeft = _commandsSystem->getSpeedLeft();
+                _speedRight = _commandsSystem->getSpeedRight();
+                setSpeed(_speedLeft, _speedRight);
             } else if(_commandsRadio->getRunMode()
                     == _commandsRadio->MODE_MOTION_ENABLED_REMOTE) {
 
-                speedLeft = _commandsRadio->getSpeedLeft();
-                speedRight = _commandsRadio->getSpeedRight();
+                _speedLeft = _commandsRadio->getSpeedLeft();
+                _speedRight = _commandsRadio->getSpeedRight();
+                setSpeed(_speedLeft, _speedRight);
             }
-
         }
-        setSpeed(speedLeft, speedRight);
+
         return motionEnable && _commandsSystem->getRunMode()
                 == _commandsSystem->MODE_AUTO_AVOID;
     }
 
     void printLoopTiming(void) {
+
 #if DEBUG_PRINT
         Serial.print("Loop: ");
         Serial.print(_deltaTime / 1000);
         Serial.print(" mS\n");
 #endif
+
     }
 
     unsigned short getDeltaTime(void) {
@@ -1068,8 +1096,6 @@ private:
     }
 
     void _readEncoderCounts(void) {
-        _prevEncoderCountsLeft = _motorController->getEncoderCountsLeft();
-        _prevEncoderCountsRight = _motorController->getEncoderCountsRight();
         // Read the encoder counts from the motor controller.
         _motorController->readEncoderCounts();
     }
@@ -1111,26 +1137,35 @@ private:
 
     unsigned long _deltaTime = 0; // Time in microseconds between now an previous.
 
-    unsigned long _prevEncoderCountsLeft;
-    unsigned long _prevEncoderCountsRight;
-
     CommandInterpreterSystem* _commandsSystem;
     CommandInterpreterRadio* _commandsRadio;
 
     bool _bumperStateLeft = false;
     bool _bumperStateRight = false;
+
+    unsigned char _speedLeft = SPEED_STOP;
+    unsigned char _speedRight = SPEED_STOP;
 };
 
+/*
+ * Auto avoid algorithm:
+ * Idea: veer away from detected objects. When too close to an object to avoid
+ * it while moving forward, go in reverse.
+ *
+ * Proportionally turn away from an object based on the left right distances
+ * Modulate the speed based on the nearest detected object .
+ */
+
 const unsigned short DIST_THRESHOLD_MAX = 100;
-const unsigned short DIST_THRESHOLD_MED = 25;
-const unsigned short DIST_THRESHOLD_MIN = 15;
+const unsigned short DIST_THRESHOLD_MED = 60;
+const unsigned short DIST_THRESHOLD_MIN = 30;
 
 // For IR sensors, nominal range is between medium and maximum.
 
-const unsigned char SPEED_CRAWL  = 140;
-const unsigned char SPEED_SLOW   = 150;
+const unsigned char SPEED_CRAWL  = 135;
+const unsigned char SPEED_SLOW   = 145;
 const unsigned char SPEED_MEDIUM = 160;
-const unsigned char SPEED_FAST   = 200;
+const unsigned char SPEED_FAST   = 180;
 
 static unsigned long moveUntil = 0;
 unsigned char autoSpeedLeft = SPEED_STOP;
@@ -1154,18 +1189,46 @@ void processAutoAvoidance(PlatformController* ctrl) {
     unsigned short sonarRightDist = ctrl->getSonarRight();
     unsigned short sonarBackDist = ctrl->getSonarBack();
     
+    bool sonarMaxGt = sonarFrontDist > DIST_THRESHOLD_MAX
+            && sonarLeftDist > DIST_THRESHOLD_MAX
+            && sonarRightDist > DIST_THRESHOLD_MAX;
+
+    bool sonarMaxLt = sonarFrontDist <= DIST_THRESHOLD_MAX
+            || sonarLeftDist <= DIST_THRESHOLD_MAX
+            || sonarRightDist <= DIST_THRESHOLD_MAX;
+
+    bool sonarMedGt = sonarFrontDist > DIST_THRESHOLD_MED
+            && sonarLeftDist > DIST_THRESHOLD_MED
+            && sonarRightDist > DIST_THRESHOLD_MED;
+
+    bool sonarMedLt = sonarFrontDist <= DIST_THRESHOLD_MED
+            || sonarLeftDist <= DIST_THRESHOLD_MED
+            || sonarRightDist <= DIST_THRESHOLD_MED;
+
+    bool sonarMinGt = sonarFrontDist > DIST_THRESHOLD_MIN
+            && sonarLeftDist > DIST_THRESHOLD_MIN
+            && sonarRightDist > DIST_THRESHOLD_MIN;
+
+    bool sonarMinLt = sonarFrontDist <= DIST_THRESHOLD_MIN
+            || sonarLeftDist <= DIST_THRESHOLD_MIN
+            || sonarRightDist <= DIST_THRESHOLD_MIN;
+
     // TODO: use IR ranges to make auto-avoidance decisions.
     unsigned short irLeftDist = ctrl->getInfraredLeft();
     unsigned short irRightDist = ctrl->getInfraredRight();
     unsigned short irBackDist = ctrl->getInfraredBack();
 
+    bool leftBlocked = irLeftDist > DIST_THRESHOLD_MED
+            || irLeftDist < DIST_THRESHOLD_MIN || ctrl->getBumperSwitchStateLeft();
+
+    bool rightBlocked = irRightDist > DIST_THRESHOLD_MED
+            || irRightDist < DIST_THRESHOLD_MIN || ctrl->getBumperSwitchStateRight();
+
+    bool irBackBlocked = irBackDist > DIST_THRESHOLD_MED || irBackDist < DIST_THRESHOLD_MIN;
+
     // And not within absolute minimum thresholds. 
-    if(moveUntil > millis() 
-        && ((sonarFrontDist > DIST_THRESHOLD_MIN
-            && sonarLeftDist > DIST_THRESHOLD_MIN 
-            && sonarRightDist > DIST_THRESHOLD_MIN
-            && sonarBackDist > DIST_THRESHOLD_MIN)
-                || (autoSpeedLeft == SPEED_STOP && autoSpeedRight == SPEED_STOP))) {
+    if(moveUntil > millis() && ((sonarMinGt && sonarBackDist > DIST_THRESHOLD_MIN)
+        || (autoSpeedLeft == SPEED_STOP && autoSpeedRight == SPEED_STOP))) {
 
         // We are executing some kind of evasive maneuver.
         // Move until the time is up.
@@ -1173,91 +1236,69 @@ void processAutoAvoidance(PlatformController* ctrl) {
         return;
     }
     
-    // Idea: scale the left and right sonar ranges to the left and right 
-    // motor outputs. Use a threshold distance for all range-finder types to
-    // determine whether we move forward or backward.
-
-    // Say the farthest sonar distance is 100 cm, then map distances from zero
-    // to 100 to 0 to 10.
-
-    // TODO: scale the proportional turn rate by the proximity of the front 
-    // sonar sensor to an object. 
-    if(sonarFrontDist > DIST_THRESHOLD_MAX
-        && sonarLeftDist > DIST_THRESHOLD_MAX
-        && sonarRightDist > DIST_THRESHOLD_MAX) {
-
+    if(sonarMaxGt && !leftBlocked && !rightBlocked) {
         // Go fast!
-        //Serial.print("Case 1: L=SPEED_FAST, R=SPEED_FAST\n");
-        autoSpeedLeft = SPEED_FAST;
-        autoSpeedRight = SPEED_FAST;
-    } else if((sonarFrontDist <= DIST_THRESHOLD_MAX
-        || sonarLeftDist <= DIST_THRESHOLD_MAX
-        || sonarRightDist <= DIST_THRESHOLD_MAX)
-            && (sonarBackDist > DIST_THRESHOLD_MIN
-                || (sonarLeftDist > DIST_THRESHOLD_MED
-                    || sonarLeftDist > DIST_THRESHOLD_MED
-                    || sonarFrontDist > DIST_THRESHOLD_MED))) {
-
-        // 3 cases, all three range-finders > medium distance.
-        // all three range-finders greater than minimum distance
-        // 1 of three range-finders less than minimum distance.
-        if(sonarFrontDist > DIST_THRESHOLD_MED
-            && sonarLeftDist > DIST_THRESHOLD_MED
-            && sonarRightDist > DIST_THRESHOLD_MED) {
-            // Maintain forward travel but steer proportionally.
-            autoSpeedLeft = sonarRightDist / 10;
-            autoSpeedRight = sonarLeftDist / 10;
-        } else if(sonarFrontDist > DIST_THRESHOLD_MIN
-            && sonarLeftDist > DIST_THRESHOLD_MIN
-            && sonarRightDist > DIST_THRESHOLD_MIN) {
-
-            if(sonarFrontDist > DIST_THRESHOLD_MED 
-                && (sonarLeftDist > DIST_THRESHOLD_MED
-                    || sonarRightDist > DIST_THRESHOLD_MED)) {
-
-                // Stuff is not too far away, and we can proportionally turn.
-                // Maybe go a bit slower.
-                autoSpeedLeft = sonarRightDist / 10;
-                autoSpeedRight = sonarLeftDist / 10;
-            } else {
-                moveUntil = millis() + 1500;
-                // Use zero turning radius travel turn away from nearest thing.
-                if(sonarLeftDist < sonarRightDist) {
-                    autoSpeedLeft = SPEED_FAST;
-                    autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-                } else {
-                    autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-                    autoSpeedRight = SPEED_FAST;
-                }
-            }
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 5;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 5;
+    } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 10;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 10;
+    } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
+        moveUntil = millis() + 2000;
+        // Use almost zero turning radius, faster forward than in reverse.
+        if(sonarLeftDist < sonarRightDist) {
+            autoSpeedLeft = SPEED_FAST;
+            autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
         } else {
-            moveUntil = millis() + 2000;
-            // Go in reverse, turn away from nearest thing.
-            if(sonarBackDist > DIST_THRESHOLD_MED) {
-                if(sonarLeftDist < sonarRightDist) {
-                    autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
-                    autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-                } else {
-                    autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-                    autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
-                }
-            } else {
-                // Zero turning radius turn.
-                if(sonarLeftDist < sonarRightDist) {
-                    autoSpeedLeft = SPEED_MEDIUM;
-                    autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-                } else {
-                    autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-                    autoSpeedRight = SPEED_MEDIUM;
-                }
-            }
+            autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
+            autoSpeedRight = SPEED_FAST;
+        }
+    } else if(sonarMedLt && sonarBackDist > DIST_THRESHOLD_MIN
+            && !ctrl->getBumperSwitchStateLeft() && !ctrl->getBumperSwitchStateRight()) {
+
+        // Don't zero turning radius if the bumpers are triggered.
+        moveUntil = millis() + 2000;
+        // Use zero turning radius, equal forward and back. Turn in place.
+        if(sonarLeftDist < sonarRightDist) {
+            autoSpeedLeft = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
+        } else {
+            autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
+        }
+        if(leftBlocked) {
+            autoSpeedLeft = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
+        } else if(rightBlocked) {
+            autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
+        }
+    } else if(sonarBackDist > DIST_THRESHOLD_MED && !irBackBlocked
+            && (sonarMinLt || (leftBlocked || rightBlocked))) {
+
+        moveUntil = millis() + 3000;
+        // Go in reverse, turn away from nearest thing.
+        if(sonarLeftDist < sonarRightDist) {
+            autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+        } else {
+            autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
+        }
+        if(leftBlocked) {
+            autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+        } else if(rightBlocked) {
+            autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
     } else {
-        moveUntil = millis() + 500;
+        moveUntil = millis() + 250;
         // Stop we can't go anywhere.
         autoSpeedLeft = SPEED_STOP;
         autoSpeedRight = SPEED_STOP;
     }
+
 
     ctrl->setSpeed(autoSpeedLeft, autoSpeedRight);
     return;
@@ -1278,8 +1319,8 @@ void sendSystemMessage(PlatformController* ctrl) {
             + ctrl->getBumperSwitchStateRight() + ","
             + ctrl->getEncoderCounterLeft() + ","
             + ctrl->getEncoderCounterRight() + ","
-            + ctrl->getMotorStatusLeft() + ","
-            + ctrl->getMotorStatusRight() + ","
+            + ctrl->getSpeedLeft() + "," // Use these to debug the auto avoid routine.
+            + ctrl->getSpeedRight() + ","
             + ctrl->getRunModeRadio() + ","
             + ctrl->getRadioEnabled() + ","
             + ctrl->getMilliseconds() + ","
@@ -1334,6 +1375,9 @@ void loop() {
     if(controller->processControlInput()) {
         // Auto avoid is selected.
         processAutoAvoidance(controller);
+    } else {
+        autoSpeedLeft = SPEED_STOP;
+        autoSpeedRight = SPEED_STOP;
     }
     controller->setTimestamp(millis(), micros() % 1000);
     controller->printLoopTiming();
