@@ -413,7 +413,7 @@ private:
     const float SCALE_FACTOR_CM = 1023.0 / 1300.48;
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const int SAMPLE_DELAY = 23; // milliseconds.
+    const int SAMPLE_DELAY = 24; // milliseconds.
 };
 
 /*****************************************************************************/
@@ -700,11 +700,11 @@ public:
     MotorController(RoboClaw* claw) {
         _claw = claw;
         bool result = true;
-        // Set the encoder counts to half of uint32_t.max
-        if(_claw->SetEncM1(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
+        // Set the encoder counts about 16 meters forward.
+        if(_claw->SetEncM1(CTL_ADDRESS, 32768) == FAILURE) {
             result = FAILURE;
         }
-        if(_claw->SetEncM2(CTL_ADDRESS, 0x7fffffff) == FAILURE) {
+        if(_claw->SetEncM2(CTL_ADDRESS, 32768) == FAILURE) {
             result = FAILURE;
         }
         //Set PID Coefficients, Kp, Ki, Kd,
@@ -804,12 +804,12 @@ private:
 
     const unsigned char CTL_ADDRESS = 0x80;
     //Velocity PID coefficients
-    const float KP = 1.0;
-    const float KI = 0.5;
+    const float KP = 1.5;
+    const float KI = 0.75;
     const float KD = 0.25;
     const int QPPS = 10300;
     const int SPEED_LIMIT = 6000;
-    const unsigned int ACCELERATION = 4000;
+    const unsigned int ACCELERATION = 5000;
     const bool INVALID = false;
     const bool FAILURE = false;
 
@@ -1160,7 +1160,9 @@ const unsigned short DIST_THRESHOLD_MAX = 100;
 const unsigned short DIST_THRESHOLD_MED = 60;
 const unsigned short DIST_THRESHOLD_MIN = 30;
 
-// For IR sensors, nominal range is between medium and maximum.
+// Nominal distance to ground from IR rangefinsers is 60 cm.
+const unsigned short DIST_THRESHOLD_IR_MIN = 33;
+const unsigned short DIST_THRESHOLD_IR_MAX = 87;
 
 const unsigned char SPEED_CRAWL  = 135;
 const unsigned char SPEED_SLOW   = 145;
@@ -1189,42 +1191,42 @@ void processAutoAvoidance(PlatformController* ctrl) {
     unsigned short sonarRightDist = ctrl->getSonarRight();
     unsigned short sonarBackDist = ctrl->getSonarBack();
     
-    bool sonarMaxGt = sonarFrontDist > DIST_THRESHOLD_MAX
-            && sonarLeftDist > DIST_THRESHOLD_MAX
+    bool sonarMaxGt = sonarLeftDist > DIST_THRESHOLD_MAX
+            && sonarFrontDist > DIST_THRESHOLD_MAX
             && sonarRightDist > DIST_THRESHOLD_MAX;
 
-    bool sonarMaxLt = sonarFrontDist <= DIST_THRESHOLD_MAX
-            || sonarLeftDist <= DIST_THRESHOLD_MAX
+    bool sonarMaxLt = sonarLeftDist <= DIST_THRESHOLD_MAX
+            || sonarFrontDist <= DIST_THRESHOLD_MAX
             || sonarRightDist <= DIST_THRESHOLD_MAX;
 
-    bool sonarMedGt = sonarFrontDist > DIST_THRESHOLD_MED
-            && sonarLeftDist > DIST_THRESHOLD_MED
+    bool sonarMedGt = sonarLeftDist > DIST_THRESHOLD_MED
+            && sonarFrontDist > DIST_THRESHOLD_MED
             && sonarRightDist > DIST_THRESHOLD_MED;
 
-    bool sonarMedLt = sonarFrontDist <= DIST_THRESHOLD_MED
-            || sonarLeftDist <= DIST_THRESHOLD_MED
+    bool sonarMedLt = sonarLeftDist <= DIST_THRESHOLD_MED
+            || sonarFrontDist <= DIST_THRESHOLD_MED
             || sonarRightDist <= DIST_THRESHOLD_MED;
 
-    bool sonarMinGt = sonarFrontDist > DIST_THRESHOLD_MIN
-            && sonarLeftDist > DIST_THRESHOLD_MIN
+    bool sonarMinGt = sonarLeftDist > DIST_THRESHOLD_MIN
+            && sonarFrontDist > DIST_THRESHOLD_MIN
             && sonarRightDist > DIST_THRESHOLD_MIN;
 
-    bool sonarMinLt = sonarFrontDist <= DIST_THRESHOLD_MIN
-            || sonarLeftDist <= DIST_THRESHOLD_MIN
+    bool sonarMinLt = sonarLeftDist <= DIST_THRESHOLD_MIN
+            || sonarFrontDist <= DIST_THRESHOLD_MIN
             || sonarRightDist <= DIST_THRESHOLD_MIN;
 
-    // TODO: use IR ranges to make auto-avoidance decisions.
     unsigned short irLeftDist = ctrl->getInfraredLeft();
     unsigned short irRightDist = ctrl->getInfraredRight();
     unsigned short irBackDist = ctrl->getInfraredBack();
 
-    bool leftBlocked = irLeftDist > DIST_THRESHOLD_MED
-            || irLeftDist < DIST_THRESHOLD_MIN || ctrl->getBumperSwitchStateLeft();
+    bool leftBlocked = irLeftDist > DIST_THRESHOLD_IR_MAX
+            || irLeftDist < DIST_THRESHOLD_IR_MIN || ctrl->getBumperSwitchStateLeft();
 
-    bool rightBlocked = irRightDist > DIST_THRESHOLD_MED
-            || irRightDist < DIST_THRESHOLD_MIN || ctrl->getBumperSwitchStateRight();
+    bool rightBlocked = irRightDist > DIST_THRESHOLD_IR_MAX
+            || irRightDist < DIST_THRESHOLD_IR_MIN || ctrl->getBumperSwitchStateRight();
 
-    bool irBackBlocked = irBackDist > DIST_THRESHOLD_MED || irBackDist < DIST_THRESHOLD_MIN;
+    bool irBackBlocked = irBackDist > DIST_THRESHOLD_IR_MAX
+            || irBackDist < DIST_THRESHOLD_IR_MIN;
 
     // And not within absolute minimum thresholds. 
     if(moveUntil > millis() && ((sonarMinGt && sonarBackDist > DIST_THRESHOLD_MIN)
@@ -1238,13 +1240,13 @@ void processAutoAvoidance(PlatformController* ctrl) {
     
     if(sonarMaxGt && !leftBlocked && !rightBlocked) {
         // Go fast!
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 5;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 5;
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 15;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 15;
     } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 10;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 10;
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 20;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 20;
     } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
-        moveUntil = millis() + 2000;
+        moveUntil = millis() + 1000;
         // Use almost zero turning radius, faster forward than in reverse.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_FAST;
@@ -1257,7 +1259,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             && !ctrl->getBumperSwitchStateLeft() && !ctrl->getBumperSwitchStateRight()) {
 
         // Don't zero turning radius if the bumpers are triggered.
-        moveUntil = millis() + 2000;
+        moveUntil = millis() + 1000;
         // Use zero turning radius, equal forward and back. Turn in place.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
@@ -1276,7 +1278,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
     } else if(sonarBackDist > DIST_THRESHOLD_MED && !irBackBlocked
             && (sonarMinLt || (leftBlocked || rightBlocked))) {
 
-        moveUntil = millis() + 3000;
+        moveUntil = millis() + 2000;
         // Go in reverse, turn away from nearest thing.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
@@ -1293,7 +1295,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
     } else {
-        moveUntil = millis() + 250;
+        moveUntil = millis() + 500;
         // Stop we can't go anywhere.
         autoSpeedLeft = SPEED_STOP;
         autoSpeedRight = SPEED_STOP;
