@@ -21,7 +21,7 @@ Global variables use 615 bytes (30%) of dynamic memory, leaving 1,433 bytes for 
 #include <SoftwareSerial.h>
 #include "RoboClaw.h"
 
-#define SHOW_FREE_MEMORY 1
+#define SHOW_FREE_MEMORY 0
 #define DEBUG_PRINT 0
 
 #if SHOW_FREE_MEMORY
@@ -366,7 +366,7 @@ public:
         // We do not need to initialize the HW for the analog input pin.
 
 #if USE_RANGEFINDER_AVERAGING
-        _average = new ExponentialMovingAverage(0.4);
+        _average = new ExponentialMovingAverage(0.5);
 #endif
 
     }
@@ -374,13 +374,14 @@ public:
     void readDistance(void) {
         // Assert the enable pin for 20 microseconds or more, then perform a
         // reading on the signal pin. Return the reading
-        digitalWrite(_enablePin, HIGH);
-        delayMicroseconds(20);
         int delta = 32000;
         int rawValue = 0;
         _prevRawValue = _rawValue;
         // Very simple mode filter. Pick the measurement closest to the last one.
         for(unsigned char i = 0; i < SAMPLE_COUNT; i++) {
+            digitalWrite(_enablePin, HIGH);
+            delayMicroseconds(20);
+            digitalWrite(_enablePin, LOW);
             delay(SAMPLE_DELAY);
             // https://www.arduino.cc/en/Tutorial/AnalogInput
             rawValue = analogRead(_signalPin);
@@ -389,8 +390,6 @@ public:
                 _rawValue = rawValue;
             }
         }
-        digitalWrite(_enablePin, LOW);
-        delay(SAMPLE_DELAY);
         // Convert the raw value into distance (centimeters).
         _distance = (unsigned short)((float)_rawValue / SCALE_FACTOR_CM);
 
@@ -413,7 +412,7 @@ private:
     const float SCALE_FACTOR_CM = 1023.0 / 1300.48;
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const int SAMPLE_DELAY = 24; // milliseconds.
+    const int SAMPLE_DELAY = 42; // milliseconds.
 };
 
 /*****************************************************************************/
@@ -516,7 +515,9 @@ public:
 #endif
 
         } else {
+#if DEBUG_PRINT
             Serial.print("Radio init fail\n");
+#endif
         }
 
         _radio.setHighPower(); // Always use this for RFM69HCW
@@ -656,8 +657,10 @@ public:
                 } else if(command == CMD_RUN_MODE) {
                     _runMode = (unsigned char)value;
                 } else if(command == CMD_RESET) {
+#if DEBUG_PRINT
                     Serial.print("\nResetting\n");
                     Serial.flush(); // Make sure this is printed.
+#endif
                     resetFunc();  //call reset
                 } else {
                     commandValid = false;
@@ -670,7 +673,9 @@ public:
 
                 // Parse user indicator commands and configuration commands.
                 if(Serial.read() != ';' && !commandValid) {
+#if DEBUG_PRINT
                     Serial.print("Bad cmd: sys.\n");
+#endif
                 }
             }
         }
@@ -854,22 +859,22 @@ public:
 
     void pollSensorData(void) {
         // Poll the sonar, IR and other sensors, bumper etc..
-        // Interleave sonar IR and bumper to allow sonar audio to dissipate.
-        _readSonarLeft();
+        if(_sonarAlternator) {
+            _readSonarLeft();
+            _readSonarRight();
+        } else {
+            _readSonarFront();
+            _readSonarBack();
+        }
+        _sonarAlternator = !_sonarAlternator;
         _readInfraredLeft();
         _readBumperSwitchStates();
-        _readSonarFront();
+
         _readInfraredRight();
-        _readSonarRight();
+
         // Next get the motor encoder counts.
         _readEncoderCounts();
-
-        // Don't bother getting the back sensors unless we are going back.
-        // This shortens the loop timing....
-        //if(_speedLeft < SPEED_STOP || _speedRight < SPEED_STOP) {
-            _readInfraredBack();
-            _readSonarBack();
-        //} // This is a bad idea, it creates a dependency problem when reversing.
+        _readInfraredBack();
     }
 
     ///----------------------------------------------------
@@ -1143,6 +1148,8 @@ private:
     bool _bumperStateLeft = false;
     bool _bumperStateRight = false;
 
+    bool _sonarAlternator = false;
+
     unsigned char _speedLeft = SPEED_STOP;
     unsigned char _speedRight = SPEED_STOP;
 };
@@ -1240,11 +1247,11 @@ void processAutoAvoidance(PlatformController* ctrl) {
     
     if(sonarMaxGt && !leftBlocked && !rightBlocked) {
         // Go fast!
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 15;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 15;
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 23;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 23;
     } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 20;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 20;
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 31;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 31;
     } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
         moveUntil = millis() + 1000;
         // Use almost zero turning radius, faster forward than in reverse.
@@ -1275,8 +1282,8 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
             autoSpeedRight = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
         }
-    } else if(sonarBackDist > DIST_THRESHOLD_MED && !irBackBlocked
-            && (sonarMinLt || (leftBlocked || rightBlocked))) {
+    } else if(sonarBackDist > DIST_THRESHOLD_MIN
+            && (sonarMedLt || (leftBlocked || rightBlocked))) {
 
         moveUntil = millis() + 2000;
         // Go in reverse, turn away from nearest thing.
