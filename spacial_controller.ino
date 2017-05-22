@@ -17,6 +17,8 @@ Global variables use 615 bytes (30%) of dynamic memory, leaving 1,433 bytes for 
 #include "moving_average.h"
 #endif
 
+#define USE_SONAR_PULSE_IN 1
+
 //Includes required to use Roboclaw library
 #include <SoftwareSerial.h>
 #include "RoboClaw.h"
@@ -189,7 +191,7 @@ public:
 
     }
 
-    int getRawDistance(void) {
+    long getRawDistance(void) {
         // Get the distance without performing a measurement.
         return _rawValue;
     }
@@ -199,8 +201,8 @@ public:
 protected:
     unsigned char _signalPin = 0;
 
-    int _rawValue = 0;
-    unsigned short _prevRawValue = 0;
+    long _rawValue = 0;
+    long _prevRawValue = 0;
     unsigned short _distance = 0;
 
 #if USE_RANGEFINDER_AVERAGING
@@ -371,27 +373,60 @@ public:
 
     }
 
+    /*************************************************************************/
+    /**
+     * @brief Perform a distance measurement using the sonar.
+     *************************************************************************/
     void readDistance(void) {
         // Assert the enable pin for 20 microseconds or more, then perform a
         // reading on the signal pin. Return the reading
-        int delta = 32000;
-        int rawValue = 0;
+        long delta = 0x7fffffff;
+        long rawValue = 0;
         _prevRawValue = _rawValue;
         // Very simple mode filter. Pick the measurement closest to the last one.
         for(unsigned char i = 0; i < SAMPLE_COUNT; i++) {
             digitalWrite(_enablePin, HIGH);
             delayMicroseconds(20);
             digitalWrite(_enablePin, LOW);
+
+#if USE_SONAR_PULSE_IN
+            // Use the pulse in input, 147uS per inch
+            // https://www.arduino.cc/en/Reference/pulseIn
+            // Max distance: 254 in * 2.54 cm per in = 645.16 cm
+            // 693.801 cm * 57.874 uS/cm = 37337.99 uS; longest pulse possible.
+            rawValue = pulseIn(_signalPin, HIGH, SAMPLE_DELAY * 1000);
+            delay(SAMPLE_DELAY);
+            // Temperature compensation (Dm = Distance in meters):
+            // Dm = TOF * ((20.05 * SQRT(Tc + 273.15)) / 2)
+            // TOF is the measured Time Of Flight in seconds,
+            // Tc is the ambient temperature in degrees C,
+#else
             delay(SAMPLE_DELAY);
             // https://www.arduino.cc/en/Tutorial/AnalogInput
             rawValue = analogRead(_signalPin);
-            if(abs(rawValue - _prevRawValue) < delta) {
+            // Dm = (Vm / (Vcc / 1024) * (147e-6uS)) * (20.05 * SQRT(Tc + 273.15) / 2)
+            // Tc is the temperature in degrees C
+            // Vm is the analog voltage output from our product (measured by the user)
+            // Vcc is the supply voltage powering the MaxSonar product
+#endif
+
+            if(abs(rawValue - _prevRawValue) < delta || rawValue ==  0) {
                 delta = abs(rawValue - _prevRawValue);
                 _rawValue = rawValue;
             }
         }
+
+#if USE_SONAR_PULSE_IN
+        // Dm = TOF * ((20.05 * SQRT(Tc + 273.15)) / 2)
+        // Raw value is time in microseconds, the conversion wants seconds
+        // which then gives us distance in meters, so divide uS by 10,000.
+        double timeOfFlight = (double)rawValue / 10000.0;
+#else
         // Convert the raw value into distance (centimeters).
-        _distance = (unsigned short)((float)_rawValue / SCALE_FACTOR_CM);
+        double timeOfFlight = (double)rawValue * 0.00735;
+#endif
+
+        _distance = timeOfFlight * ((20.5 * sqrt(_temperature + 273.15)) / 2.0);
 
 #if USE_RANGEFINDER_AVERAGING
         _average->addSample(_distance);
@@ -399,21 +434,40 @@ public:
 
     }
 
+    void calibrateSensor(void) {
+        delay(250);
+        digitalWrite(_enablePin, HIGH);
+        delayMicroseconds(20);
+        digitalWrite(_enablePin, LOW);
+        delay(100);
+        digitalWrite(_enablePin, HIGH);
+        delay(49);
+        digitalWrite(_enablePin, LOW);
+        delay(100);
+    }
+
+    static void setTemperature(double temperature) {
+        // Set the temperature in order to do temperature compensation.
+        _temperature = temperature;
+    }
+
 private:
 
+    static double _temperature;
     unsigned char _enablePin = 0;
-
     const unsigned char SAMPLE_COUNT = 1;
-    
-    // Outputs analog voltage with a scaling factor of (Vcc / 512) per inch.
-    // A supply of 5V yields ~9.8mV / inch and 3.3V yields ~6.4mV/inch.
-    //const float SCALE_FACTOR_IN = 1023.0 / 512.0;
-    // 2.54 centimeters per inch.
-    const float SCALE_FACTOR_CM = 1023.0 / 1300.48;
+
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const int SAMPLE_DELAY = 42; // milliseconds.
+    const int SAMPLE_DELAY = 49; // milliseconds.
 };
+
+double SonarRangefinder::_temperature = 21.1111;
+
+
+///============================================================================
+/// COMMAND INTERPRETER:
+///============================================================================
 
 /*****************************************************************************/
 /**
@@ -855,26 +909,38 @@ public:
                 , MUX_DIGITAL_OUT_S1, MUX_DIGITAL_OUT_S2, _muxAnalogInput->UNUSED);
 
         _motorController = new MotorController(motorController);
+
+        this->_calibrateSonarSensors();
+    }
+
+    float readTemperature(void) {
+        return 21.1111;
     }
 
     void pollSensorData(void) {
         // Poll the sonar, IR and other sensors, bumper etc..
         if(_sonarAlternator) {
+            // Read temperature from a sensor and perform an update of the
+            // sonar class's static temperature variable.
+            SonarRangefinder::setTemperature(readTemperature());
             _readSonarLeft();
-            _readSonarRight();
         } else {
             _readSonarFront();
+        }
+
+        _readInfraredLeft();
+        _readInfraredRight();
+        _readInfraredBack();
+        _readBumperSwitchStates();
+        // Next get the motor encoder counts.
+        _readEncoderCounts();
+
+        if(_sonarAlternator) {
+            _readSonarRight();
+        } else {
             _readSonarBack();
         }
         _sonarAlternator = !_sonarAlternator;
-        _readInfraredLeft();
-        _readBumperSwitchStates();
-
-        _readInfraredRight();
-
-        // Next get the motor encoder counts.
-        _readEncoderCounts();
-        _readInfraredBack();
     }
 
     ///----------------------------------------------------
@@ -1052,6 +1118,18 @@ public:
     }
 
 private:
+
+    void _calibrateSonarSensors(void) {
+        // Ping the front sonar and get the distance in centimeters.
+        _setSonarMux(C0_SONAR_ENABLE_LEFT, C0_SONAR_LEFT);
+        _sonarLeft->calibrateSensor();
+        _setSonarMux(C1_SONAR_ENABLE_FRONT, C1_SONAR_FRONT);
+        _sonarFront->calibrateSensor();
+        _setSonarMux(C2_SONAR_ENABLE_RIGHT, C2_SONAR_RIGHT);
+        _sonarRight->calibrateSensor();
+        _setSonarMux(C3_SONAR_ENABLE_BACK, C3_SONAR_BACK);
+        _sonarBack->calibrateSensor();
+    }
 
     void _readSonarLeft(void) {
         // Ping the front sonar and get the distance in centimeters.
