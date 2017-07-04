@@ -250,7 +250,6 @@ public:
 
     void readDistance(void) {
         // Read the analog input, and calculate the distance.
-        // TODO: determine whether we need to take multiple samples and average.
         _rawValue = analogRead(_signalPin);
         /*
         // This is the ideal representation, but it is slow.
@@ -396,18 +395,10 @@ public:
             // 693.801 cm * 57.874 uS/cm = 37337.99 uS; longest pulse possible.
             rawValue = pulseIn(_signalPin, HIGH, SAMPLE_DELAY * 1000);
             delay(SAMPLE_DELAY);
-            // Temperature compensation (Dm = Distance in meters):
-            // Dm = TOF * ((20.05 * SQRT(Tc + 273.15)) / 2)
-            // TOF is the measured Time Of Flight in seconds,
-            // Tc is the ambient temperature in degrees C,
 #else
             delay(SAMPLE_DELAY);
             // https://www.arduino.cc/en/Tutorial/AnalogInput
             rawValue = analogRead(_signalPin);
-            // Dm = (Vm / (Vcc / 1024) * (147e-6uS)) * (20.05 * SQRT(Tc + 273.15) / 2)
-            // Tc is the temperature in degrees C
-            // Vm is the analog voltage output from our product (measured by the user)
-            // Vcc is the supply voltage powering the MaxSonar product
 #endif
 
             if(abs(rawValue - _prevRawValue) < delta || rawValue ==  0) {
@@ -417,12 +408,22 @@ public:
         }
 
 #if USE_SONAR_PULSE_IN
+        // Temperature compensation (Dm = Distance in meters):
+        // TOF is the measured Time Of Flight in seconds,
+        // Tc is the ambient temperature in degrees C,
         // Dm = TOF * ((20.05 * SQRT(Tc + 273.15)) / 2)
         // Raw value is time in microseconds, the conversion wants seconds
         // which then gives us distance in meters, so divide uS by 10,000.
+        if(rawValue == 0) {
+            rawValue = 30000; // 30000 microseconds for sound to go 10 meters.
+        }
         double timeOfFlight = (double)rawValue / 10000.0;
 #else
         // Convert the raw value into distance (centimeters).
+        // Tc is the temperature in degrees C
+        // Vm is the analog voltage output from our product (measured by the user)
+        // Vcc is the supply voltage powering the MaxSonar product
+        // Dm = (Vm / (Vcc / 1024) * (147e-6uS)) * (20.05 * SQRT(Tc + 273.15) / 2)
         double timeOfFlight = (double)rawValue * 0.00735;
 #endif
 
@@ -441,7 +442,7 @@ public:
         digitalWrite(_enablePin, LOW);
         delay(100);
         digitalWrite(_enablePin, HIGH);
-        delay(49);
+        delay(SAMPLE_DELAY);
         digitalWrite(_enablePin, LOW);
         delay(100);
     }
@@ -459,7 +460,7 @@ private:
 
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const int SAMPLE_DELAY = 49; // milliseconds.
+    const long SAMPLE_DELAY = 60; // milliseconds.
 };
 
 double SonarRangefinder::_temperature = 21.1111;
@@ -620,7 +621,6 @@ public:
 
             }
         } else {
-            // TODO: if we don't receive packets in a while shut down motion.
             _noDataCounter++;
             if(_noDataCounter > NO_DATA_COUNT_LIMIT) {
                 _noDataCounter = NO_DATA_COUNT_LIMIT + 1; // prevent overflow.
@@ -846,10 +846,6 @@ public:
         }
         // The acceleration used here, seems not to be the default one...
         _claw->SpeedAccelM1M2(CTL_ADDRESS, ACCELERATION, qppsSpeedRight, qppsSpeedLeft);
-        //_claw->SpeedM2(CTL_ADDRESS, qppsSpeedLeft);
-        //_claw->SpeedM1(CTL_ADDRESS, qppsSpeedRight);
-
-        // TODO: see about using: SpeedAccelM1M2()
     }
 
 private:
@@ -1058,6 +1054,8 @@ public:
      *
      * @details Check the mode values from the system and remote control
      *     channels. Take action based on the mode settings and state input.
+     *
+     * @returns boolean, whether to execute auto avoidance routine. true = avoid.
      *************************************************************************/
     bool processControlInput(void) {
         _commandsSystem->readCommands();
