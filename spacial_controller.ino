@@ -367,7 +367,7 @@ public:
         // We do not need to initialize the HW for the analog input pin.
 
 #if USE_RANGEFINDER_AVERAGING
-        _average = new ExponentialMovingAverage(0.5);
+        _average = new ExponentialMovingAverage(0.8);
 #endif
 
     }
@@ -415,7 +415,7 @@ public:
         // Raw value is time in microseconds, the conversion wants seconds
         // which then gives us distance in meters, so divide uS by 10,000.
         if(rawValue == 0) {
-            rawValue = 30000; // 30000 microseconds for sound to go 10 meters.
+            rawValue = 8000; // 7000 microseconds for sound to go 2.4 meters.
         }
         double timeOfFlight = (double)rawValue / 10000.0;
 #else
@@ -460,7 +460,7 @@ private:
 
     // Delay enough time for sound to travel up to 645 cm to an object and 
     // be reflected back to the sensor.
-    const long SAMPLE_DELAY = 60; // milliseconds.
+    const long SAMPLE_DELAY = 40; // milliseconds.
 };
 
 double SonarRangefinder::_temperature = 21.1111;
@@ -859,9 +859,9 @@ private:
 
     const unsigned char CTL_ADDRESS = 0x80;
     //Velocity PID coefficients
-    const float KP = 1.5;
-    const float KI = 0.75;
-    const float KD = 0.25;
+    const float KP = 2.0;
+    const float KI = 0.80;
+    const float KD = 0.35;
     const int QPPS = 10300;
     const int SPEED_LIMIT = 6000;
     const unsigned int ACCELERATION = 5000;
@@ -1243,9 +1243,9 @@ const unsigned short DIST_THRESHOLD_MAX = 100;
 const unsigned short DIST_THRESHOLD_MED = 60;
 const unsigned short DIST_THRESHOLD_MIN = 30;
 
-// Nominal distance to ground from IR rangefinsers is 60 cm.
+// Nominal distance to ground from IR rangefinsers is approx 60 cm.
 const unsigned short DIST_THRESHOLD_IR_MIN = 33;
-const unsigned short DIST_THRESHOLD_IR_MAX = 87;
+const unsigned short DIST_THRESHOLD_IR_MAX = 87; // So 54 cm is nominal.
 
 const unsigned char SPEED_CRAWL  = 135;
 const unsigned char SPEED_SLOW   = 145;
