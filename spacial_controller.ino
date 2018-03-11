@@ -526,7 +526,7 @@ public:
     /**************************************************************************
      * @brief Get the desired run mode.
      *
-     * @returns AUTO_AVOID, EXT_CONTROL, or REMOTE_CONTROL
+     * @returns The mode set by the controller subclass.
      *************************************************************************/
     unsigned char getRunMode() {
         return _runMode;
@@ -538,7 +538,7 @@ protected:
         CMD_RESET       = 0x61, // 'a' abort, reset the micro-controller.
         CMD_SPEED_LEFT  = 0x6c, // 'l' left, valid speeds: (0, 255)
         CMD_SPEED_RIGHT = 0x72, // 'r' right, valid speeds: (0, 255)
-        CMD_RUN_MODE    = 0x6d, // 'm' mode: 0 = AUTO_AVOID, 1 = EXT_CONTROL, 2 = REMOTE_CONTROL
+        CMD_RUN_MODE    = 0x6d, // 'm' mode: modes are defined by subclasses.
         // TODO: command to read motor controller PID constants.
     };
 
@@ -560,6 +560,8 @@ class CommandInterpreterRadio : public CommandInterpreter {
 
 public:
     CommandInterpreterRadio(void) : CommandInterpreter(String("Radio")) {
+        _runMode = MODE_MOTION_DISABLED;
+
         // Initialize the RFM69HCW:
         _radio.setCS(SPI_CS);
 
@@ -686,7 +688,7 @@ class CommandInterpreterSystem : public CommandInterpreter {
 
 public:
     CommandInterpreterSystem(void) : CommandInterpreter("System") {
-        _runMode = MODE_REMOTE_CONTROL;
+        _runMode = MODE_AUTO_AVOID;
     }
 
     void readCommands() {
@@ -736,10 +738,9 @@ public:
     }
 
     enum RunModes {
-        MODE_REMOTE_CONTROL  = 0,
-        MODE_SYS_CONTROL     = 1,
-        MODE_AUTO_AVOID      = 2,
-        MODE_MANUAL_OVERRIDE = 3,
+        MODE_SYS_CONTROL     = 0,
+        MODE_AUTO_AVOID      = 1,
+        MODE_MANUAL_OVERRIDE = 2,
     };
 
 private:
@@ -1065,9 +1066,7 @@ public:
         _commandsRadio->printState();
 
         bool motionEnable = (_commandsRadio->getRunMode()
-                == _commandsRadio->MODE_MOTION_ENABLED_AUTO)
-                || (_commandsRadio->getRunMode()
-                    == _commandsRadio->MODE_MOTION_ENABLED_REMOTE)
+                != _commandsRadio->MODE_MOTION_DISABLED)
                 || (_commandsSystem->getRunMode()
                     == _commandsSystem->MODE_MANUAL_OVERRIDE);
 
@@ -1097,8 +1096,10 @@ public:
             }
         }
 
-        return motionEnable && _commandsSystem->getRunMode()
-                == _commandsSystem->MODE_AUTO_AVOID;
+        return motionEnable && (_commandsSystem->getRunMode()
+                == _commandsSystem->MODE_AUTO_AVOID)
+                && (_commandsRadio->getRunMode()
+                != _commandsRadio->MODE_MOTION_ENABLED_REMOTE);
     }
 
     void printLoopTiming(void) {
@@ -1294,19 +1295,21 @@ void processAutoAvoidance(PlatformController* ctrl) {
             && sonarFrontDist > DIST_THRESHOLD_MIN
             && sonarRightDist > DIST_THRESHOLD_MIN;
 
-    bool sonarMinLt = sonarLeftDist <= DIST_THRESHOLD_MIN
-            || sonarFrontDist <= DIST_THRESHOLD_MIN
-            || sonarRightDist <= DIST_THRESHOLD_MIN;
+    bool sonarMinLt = sonarFrontDist <= DIST_THRESHOLD_MIN;
 
     unsigned short irLeftDist = ctrl->getInfraredLeft();
     unsigned short irRightDist = ctrl->getInfraredRight();
     unsigned short irBackDist = ctrl->getInfraredBack();
 
     bool leftBlocked = irLeftDist > DIST_THRESHOLD_IR_MAX
-            || irLeftDist < DIST_THRESHOLD_IR_MIN || ctrl->getBumperSwitchStateLeft();
+            || irLeftDist < DIST_THRESHOLD_IR_MIN
+            || sonarLeftDist <= DIST_THRESHOLD_MIN
+            || ctrl->getBumperSwitchStateLeft() || sonarMinLt;
 
     bool rightBlocked = irRightDist > DIST_THRESHOLD_IR_MAX
-            || irRightDist < DIST_THRESHOLD_IR_MIN || ctrl->getBumperSwitchStateRight();
+            || irRightDist < DIST_THRESHOLD_IR_MIN
+            || sonarRightDist <= DIST_THRESHOLD_MIN
+            || ctrl->getBumperSwitchStateRight() || sonarMinLt;
 
     bool irBackBlocked = irBackDist > DIST_THRESHOLD_IR_MAX
             || irBackDist < DIST_THRESHOLD_IR_MIN;
@@ -1339,7 +1342,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedRight = SPEED_FAST;
         }
     } else if(sonarMedLt && sonarBackDist > DIST_THRESHOLD_MIN
-            && !ctrl->getBumperSwitchStateLeft() && !ctrl->getBumperSwitchStateRight()) {
+            && !leftBlocked && !rightBlocked) {
 
         // Don't zero turning radius if the bumpers are triggered.
         moveUntil = millis() + 1000;
@@ -1351,14 +1354,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
             autoSpeedRight = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
         }
-        if(leftBlocked) {
-            autoSpeedLeft = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
-            autoSpeedRight = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-        } else if(rightBlocked) {
-            autoSpeedLeft = SPEED_STOP - (SPEED_MEDIUM - SPEED_STOP);
-            autoSpeedRight = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
-        }
-    } else if(sonarBackDist > DIST_THRESHOLD_MIN
+    } else if(sonarBackDist > DIST_THRESHOLD_MIN && !irBackBlocked
             && (sonarMedLt || (leftBlocked || rightBlocked))) {
 
         moveUntil = millis() + 2000;
@@ -1370,7 +1366,10 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
-        if(leftBlocked) {
+        if(leftBlocked && rightBlocked) {
+            autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+            autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
+        } else if(leftBlocked) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
         } else if(rightBlocked) {
@@ -1383,7 +1382,6 @@ void processAutoAvoidance(PlatformController* ctrl) {
         autoSpeedLeft = SPEED_STOP;
         autoSpeedRight = SPEED_STOP;
     }
-
 
     ctrl->setSpeed(autoSpeedLeft, autoSpeedRight);
     return;
@@ -1468,4 +1466,6 @@ void loop() {
     controller->printLoopTiming();
     return;
 }
+
+
 
