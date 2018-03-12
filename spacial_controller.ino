@@ -4,8 +4,8 @@
  *
  * Targeted for Sparkfun's Arduino Pro Mini 5V 16MHz microcontroller.
  *
-Sketch uses 19,260 bytes (62%) of program storage space. Maximum is 30,720 bytes.
-Global variables use 615 bytes (30%) of dynamic memory, leaving 1,433 bytes for local variables. Maximum is 2,048 bytes.
+Sketch uses 19562 bytes (63%) of program storage space. Maximum is 30720 bytes.
+Global variables use 573 bytes (27%) of dynamic memory, leaving 1475 bytes for local variables. Maximum is 2048 bytes.
  *****************************************************************************/
 
 #include <SPI.h>
@@ -1244,14 +1244,14 @@ const unsigned short DIST_THRESHOLD_MAX = 100;
 const unsigned short DIST_THRESHOLD_MED = 60;
 const unsigned short DIST_THRESHOLD_MIN = 30;
 
-// Nominal distance to ground from IR rangefinsers is approx 60 cm.
-const unsigned short DIST_THRESHOLD_IR_MIN = 33;
-const unsigned short DIST_THRESHOLD_IR_MAX = 87; // So 54 cm is nominal.
+// Nominal distance to ground from IR rangefinsers is approx 55 cm.
+const unsigned short DIST_THRESHOLD_IR_MIN = 30;
+const unsigned short DIST_THRESHOLD_IR_MAX = 80;
 
 const unsigned char SPEED_CRAWL  = 135;
 const unsigned char SPEED_SLOW   = 145;
 const unsigned char SPEED_MEDIUM = 160;
-const unsigned char SPEED_FAST   = 180;
+const unsigned char SPEED_FAST   = 175;
 
 static unsigned long moveUntil = 0;
 unsigned char autoSpeedLeft = SPEED_STOP;
@@ -1315,7 +1315,8 @@ void processAutoAvoidance(PlatformController* ctrl) {
             || irBackDist < DIST_THRESHOLD_IR_MIN;
 
     // And not within absolute minimum thresholds. 
-    if(moveUntil > millis() && ((sonarMinGt && sonarBackDist > DIST_THRESHOLD_MIN)
+    if(moveUntil > millis() && ((!irBackBlocked && sonarMinGt
+        && sonarBackDist > DIST_THRESHOLD_MIN)
         || (autoSpeedLeft == SPEED_STOP && autoSpeedRight == SPEED_STOP))) {
 
         // We are executing some kind of evasive maneuver.
@@ -1344,7 +1345,6 @@ void processAutoAvoidance(PlatformController* ctrl) {
     } else if(sonarMedLt && sonarBackDist > DIST_THRESHOLD_MIN
             && !leftBlocked && !rightBlocked) {
 
-        // Don't zero turning radius if the bumpers are triggered.
         moveUntil = millis() + 1000;
         // Use zero turning radius, equal forward and back. Turn in place.
         if(sonarLeftDist < sonarRightDist) {
@@ -1357,7 +1357,13 @@ void processAutoAvoidance(PlatformController* ctrl) {
     } else if(sonarBackDist > DIST_THRESHOLD_MIN && !irBackBlocked
             && (sonarMedLt || (leftBlocked || rightBlocked))) {
 
-        moveUntil = millis() + 2000;
+        if(sonarBackDist > DIST_THRESHOLD_MAX) {
+            moveUntil = millis() + 1500;
+        } else if(sonarBackDist > DIST_THRESHOLD_MED) {
+            moveUntil = millis() + 500;
+        } else {
+            moveUntil = millis() + 250; // Don't go as far if distance is small.
+        }
         // Go in reverse, turn away from nearest thing.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
@@ -1377,7 +1383,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
     } else {
-        moveUntil = millis() + 500;
+        moveUntil = millis() + 1000;
         // Stop we can't go anywhere.
         autoSpeedLeft = SPEED_STOP;
         autoSpeedRight = SPEED_STOP;
