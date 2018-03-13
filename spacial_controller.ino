@@ -1326,13 +1326,18 @@ void processAutoAvoidance(PlatformController* ctrl) {
     }
     
     if(sonarMaxGt && !leftBlocked && !rightBlocked) {
-        // Go fast!
+        // Go fast! Go straight, there is nothing in our way, so don't turn.
         autoSpeedLeft = SPEED_STOP + sonarRightDist / 23;
         autoSpeedRight = SPEED_STOP + sonarLeftDist / 23;
     } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
-        // Go a little bit slower.
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 31;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 31;
+        // Go a little bit slower, and turn slightly away from closest thing.
+        if(sonarLeftDist < sonarRightDist) {
+            autoSpeedLeft = SPEED_STOP + sonarRightDist / 31;
+            autoSpeedRight = SPEED_STOP + sonarLeftDist / 37;
+        } else {
+            autoSpeedLeft = SPEED_STOP + sonarRightDist / 37;
+            autoSpeedRight = SPEED_STOP + sonarLeftDist / 31;
+        }
     } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
         moveUntil = millis() + 1000;
         // Use almost zero turning radius, faster forward than in reverse.
@@ -1378,7 +1383,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
         if(leftBlocked && !rightBlocked) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-        } else if(rightBlocked && !leftBlocked) {
+        } else if(!leftBlocked && rightBlocked) {
             autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
