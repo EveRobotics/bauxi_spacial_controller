@@ -1330,6 +1330,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
         autoSpeedLeft = SPEED_STOP + sonarRightDist / 23;
         autoSpeedRight = SPEED_STOP + sonarLeftDist / 23;
     } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
+        // Go a little bit slower.
         autoSpeedLeft = SPEED_STOP + sonarRightDist / 31;
         autoSpeedRight = SPEED_STOP + sonarLeftDist / 31;
     } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
@@ -1343,7 +1344,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedRight = SPEED_FAST;
         }
     } else if(sonarMedLt && sonarBackDist > DIST_THRESHOLD_MIN
-            && !leftBlocked && !rightBlocked) {
+            && !leftBlocked && !rightBlocked && !irBackBlocked) {
 
         moveUntil = millis() + 1000;
         // Use zero turning radius, equal forward and back. Turn in place.
@@ -1360,10 +1361,11 @@ void processAutoAvoidance(PlatformController* ctrl) {
         if(sonarBackDist > DIST_THRESHOLD_MAX) {
             moveUntil = millis() + 1500;
         } else if(sonarBackDist > DIST_THRESHOLD_MED) {
-            moveUntil = millis() + 500;
+            moveUntil = millis() + 250;
         } else {
-            moveUntil = millis() + 250; // Don't go as far if distance is small.
+            moveUntil = millis() + 100; // Don't go as far if distance is small.
         }
+
         // Go in reverse, turn away from nearest thing.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
@@ -1372,13 +1374,11 @@ void processAutoAvoidance(PlatformController* ctrl) {
             autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
-        if(leftBlocked && rightBlocked) {
-            autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-            autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-        } else if(leftBlocked) {
+
+        if(leftBlocked && !rightBlocked) {
             autoSpeedLeft = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
-        } else if(rightBlocked) {
+        } else if(rightBlocked && !leftBlocked) {
             autoSpeedLeft = SPEED_STOP - (SPEED_FAST - SPEED_STOP);
             autoSpeedRight = SPEED_STOP - (SPEED_CRAWL - SPEED_STOP);
         }
@@ -1414,6 +1414,7 @@ void sendSystemMessage(PlatformController* ctrl) {
             + ctrl->getRadioEnabled() + ","
             + ctrl->getMilliseconds() + ","
             + ctrl->getMicroseconds() + "\n";
+
     Serial.print(message);
 }
 
