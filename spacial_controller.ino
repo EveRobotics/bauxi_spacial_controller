@@ -1248,8 +1248,8 @@ const unsigned short DIST_THRESHOLD_MIN = 30;
 const unsigned short DIST_THRESHOLD_IR_MIN = 30;
 const unsigned short DIST_THRESHOLD_IR_MAX = 80;
 
-const unsigned char SPEED_CRAWL  = 135;
-const unsigned char SPEED_SLOW   = 145;
+const unsigned char SPEED_CRAWL  = 140;
+const unsigned char SPEED_SLOW   = 150;
 const unsigned char SPEED_MEDIUM = 160;
 const unsigned char SPEED_FAST   = 175;
 
@@ -1351,7 +1351,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
     } else if(sonarMedLt && sonarBackDist > DIST_THRESHOLD_MIN
             && !leftBlocked && !rightBlocked && !irBackBlocked) {
 
-        moveUntil = millis() + 1000;
+        moveUntil = millis() + 1500;
         // Use zero turning radius, equal forward and back. Turn in place.
         if(sonarLeftDist < sonarRightDist) {
             autoSpeedLeft = SPEED_STOP + (SPEED_MEDIUM - SPEED_STOP);
@@ -1366,9 +1366,9 @@ void processAutoAvoidance(PlatformController* ctrl) {
         if(sonarBackDist > DIST_THRESHOLD_MAX) {
             moveUntil = millis() + 1500;
         } else if(sonarBackDist > DIST_THRESHOLD_MED) {
-            moveUntil = millis() + 250;
+            moveUntil = millis() + 500;
         } else {
-            moveUntil = millis() + 100; // Don't go as far if distance is small.
+            moveUntil = millis() + 250; // Don't go as far if distance is small.
         }
 
         // Go in reverse, turn away from nearest thing.
