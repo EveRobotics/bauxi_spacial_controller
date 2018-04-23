@@ -860,9 +860,9 @@ private:
 
     const unsigned char CTL_ADDRESS = 0x80;
     //Velocity PID coefficients
-    const float KP = 2.0;
+    const float KP = 5.0;
     const float KI = 0.80;
-    const float KD = 0.35;
+    const float KD = 0.40;
     const int QPPS = 10300;
     const int SPEED_LIMIT = 6000;
     const unsigned int ACCELERATION = 5000;
@@ -1244,14 +1244,14 @@ const unsigned short DIST_THRESHOLD_MAX = 100;
 const unsigned short DIST_THRESHOLD_MED = 60;
 const unsigned short DIST_THRESHOLD_MIN = 30;
 
-// Nominal distance to ground from IR rangefinsers is approx 55 cm.
+// Nominal distance to ground from IR range-finders is approx 55 cm.
 const unsigned short DIST_THRESHOLD_IR_MIN = 30;
 const unsigned short DIST_THRESHOLD_IR_MAX = 80;
 
-const unsigned char SPEED_CRAWL  = 140;
-const unsigned char SPEED_SLOW   = 150;
-const unsigned char SPEED_MEDIUM = 160;
-const unsigned char SPEED_FAST   = 175;
+const unsigned char SPEED_CRAWL  = SPEED_STOP + 12;
+const unsigned char SPEED_SLOW   = SPEED_STOP + 22;
+const unsigned char SPEED_MEDIUM = SPEED_STOP + 32;
+const unsigned char SPEED_FAST   = SPEED_STOP + 48;
 
 static unsigned long moveUntil = 0;
 unsigned char autoSpeedLeft = SPEED_STOP;
@@ -1274,6 +1274,8 @@ void processAutoAvoidance(PlatformController* ctrl) {
     unsigned short sonarFrontDist = ctrl->getSonarFront();
     unsigned short sonarRightDist = ctrl->getSonarRight();
     unsigned short sonarBackDist = ctrl->getSonarBack();
+    sonarLeftDist = min(sonarLeftDist, 140);
+    sonarRightDist = min(sonarRightDist, 140);
     
     bool sonarMaxGt = sonarLeftDist > DIST_THRESHOLD_MAX
             && sonarFrontDist > DIST_THRESHOLD_MAX
@@ -1326,17 +1328,17 @@ void processAutoAvoidance(PlatformController* ctrl) {
     }
     
     if(sonarMaxGt && !leftBlocked && !rightBlocked) {
-        // Go fast! Go straight, there is nothing in our way, so don't turn.
-        autoSpeedLeft = SPEED_STOP + sonarRightDist / 23;
-        autoSpeedRight = SPEED_STOP + sonarLeftDist / 23;
+        // Go fast! Go straight, there is nothing immediately in our way.
+        autoSpeedLeft = SPEED_STOP + sonarRightDist / 7;
+        autoSpeedRight = SPEED_STOP + sonarLeftDist / 7;
     } else if(sonarMedGt && !leftBlocked && !rightBlocked) {
-        // Go a little bit slower, and turn slightly away from closest thing.
+        // Go a little bit slower, and turn away from closest thing.
         if(sonarLeftDist < sonarRightDist) {
-            autoSpeedLeft = SPEED_STOP + sonarRightDist / 31;
-            autoSpeedRight = SPEED_STOP + sonarLeftDist / 37;
+            autoSpeedLeft = SPEED_STOP + sonarRightDist / 7;
+            autoSpeedRight = SPEED_STOP + sonarLeftDist / 17;
         } else {
-            autoSpeedLeft = SPEED_STOP + sonarRightDist / 37;
-            autoSpeedRight = SPEED_STOP + sonarLeftDist / 31;
+            autoSpeedLeft = SPEED_STOP + sonarRightDist / 17;
+            autoSpeedRight = SPEED_STOP + sonarLeftDist / 7;
         }
     } else if(sonarMaxLt && sonarMinGt && !leftBlocked && !rightBlocked) {
         moveUntil = millis() + 1000;
