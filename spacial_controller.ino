@@ -1245,8 +1245,8 @@ const unsigned short DIST_THRESHOLD_MED = 60;
 const unsigned short DIST_THRESHOLD_MIN = 30;
 
 // Nominal distance to ground from IR range-finders is approx 55 cm.
-const unsigned short DIST_THRESHOLD_IR_MIN = 30;
-const unsigned short DIST_THRESHOLD_IR_MAX = 80;
+const unsigned short DIST_THRESHOLD_IR_MIN = 20;
+const unsigned short DIST_THRESHOLD_IR_MAX = 90;
 
 const unsigned char SPEED_CRAWL  = SPEED_STOP + 12;
 const unsigned char SPEED_SLOW   = SPEED_STOP + 22;
@@ -1366,7 +1366,7 @@ void processAutoAvoidance(PlatformController* ctrl) {
             && (sonarMedLt || (leftBlocked || rightBlocked))) {
 
         if(sonarBackDist > DIST_THRESHOLD_MAX) {
-            moveUntil = millis() + 1500;
+            moveUntil = millis() + 2000;
         } else if(sonarBackDist > DIST_THRESHOLD_MED) {
             moveUntil = millis() + 500;
         } else {
